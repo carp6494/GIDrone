@@ -25,3 +25,5 @@ export function fetchLocationByQuery(options: {
   country?: string
 }): Promise<LocationSearchResult | null>
 export function getKPIndex(): Promise<number>
+export function runHealthCheck(): Promise<any>
+export function getLastWeatherFetchTimestamp(): number | null

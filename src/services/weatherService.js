@@ -103,6 +103,13 @@ const invokeAviationProxy = async (body) => {
   return data
 }
 
+let lastWeatherFetch = null
+
+export const getLastWeatherFetchTimestamp = () => lastWeatherFetch
+
+export const runHealthCheck = async () =>
+  invokeAviationProxy({ health: true })
+
 export const fetchCurrentWeather = async ({
   lat,
   lon,
@@ -122,13 +129,18 @@ export const fetchCurrentWeather = async ({
   })
 
   // One Call 2.5 (8-day forecast + hourly + uvi)
-  const oneCallData = await invokeAviationProxy({
-    provider: "openweather",
-    mode: "onecall",
-    lat,
-    lon,
-    units,
-  })
+  let oneCallData = null
+  try {
+    oneCallData = await invokeAviationProxy({
+      provider: "openweather",
+      mode: "onecall",
+      lat,
+      lon,
+      units,
+    })
+  } catch (error) {
+    console.warn("One Call forecast request failed.", error)
+  }
 
   const { uvi, pop } = extractUvAndPop(oneCallData ?? weatherData)
 
@@ -148,6 +160,8 @@ export const fetchCurrentWeather = async ({
   })
 
   const forecast = Array.isArray(oneCallData?.daily) ? oneCallData.daily : []
+
+  lastWeatherFetch = Date.now()
 
   return {
     ...weatherData,

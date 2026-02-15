@@ -34,8 +34,10 @@ import {
 import {
   fetchCurrentWeather,
   geocodeLocation,
+  getLastWeatherFetchTimestamp,
   getKPIndex,
 } from "../services/weatherService"
+import { formatLocalHour, formatLocalTime, type TimeFormat } from "../utils/timeFormat"
 import {
   calculateFlyability,
   DEFAULT_FLYABILITY_THRESHOLDS,
@@ -47,7 +49,6 @@ import {
 } from "../utils/FlyabilityEngine"
 
 type UnitType = "mph" | "kt"
-type TimeFormat = "12h" | "24h"
 
 type ConditionsTabProps = {
   unit: UnitType
@@ -277,13 +278,18 @@ const formatSunTime = (
   timeFormat: TimeFormat
 ) => {
   if (typeof timestamp !== "number") return "--"
-  const date = new Date(timestamp * 1000)
-  const options: Intl.DateTimeFormatOptions = {
-    hour: timeFormat === "12h" ? "2-digit" : "2-digit",
-    minute: "2-digit",
-    hour12: true,
-  }
-  return new Intl.DateTimeFormat("en-US", options).format(date).toLowerCase()
+  return formatLocalTime(timestamp, timeFormat).toLowerCase()
+}
+
+const formatRelativeTime = (timestamp: number, now: number) => {
+  const deltaSeconds = Math.max(0, Math.round((now - timestamp) / 1000))
+  if (deltaSeconds < 60) return "just now"
+  const minutes = Math.floor(deltaSeconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }
 
 const getForecastReferenceTime = (timestamp: number | null | undefined) => {
@@ -562,6 +568,7 @@ const ForecastSection = ({
   onSelectDay,
   userThresholds,
   activeCoords,
+  onRefresh,
 }: {
   forecastDays: ForecastDay[]
   unit: UnitType
@@ -570,8 +577,8 @@ const ForecastSection = ({
   onSelectDay: (index: number | null) => void
   userThresholds: FlyabilityThresholds
   activeCoords: { lat: number; lon: number }
+  onRefresh: () => void
 }) => {
-  if (forecastDays.length === 0) return null
   return (
     <section className="rounded-3xl border border-slate-800/70 bg-slate-950/60 p-6">
       <div className="flex items-center justify-between">
@@ -584,6 +591,18 @@ const ForecastSection = ({
           </h3>
         </div>
       </div>
+      {forecastDays.length === 0 ? (
+        <div className="mt-5 rounded-2xl border border-slate-800/80 bg-slate-950/40 p-4 text-sm text-slate-300">
+          <p>Forecast unavailable. Try Refresh.</p>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="mt-3 inline-flex items-center gap-2 rounded-full border border-slate-700/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em] text-slate-300 transition hover:border-emerald-300/60 hover:text-emerald-100"
+          >
+            Refresh
+          </button>
+        </div>
+      ) : (
       <div className="mt-5 overflow-x-auto">
         <div className="flex min-w-max gap-4 pb-2">
           {forecastDays.map((day, index) => {
@@ -711,6 +730,7 @@ const ForecastSection = ({
           })}
         </div>
       </div>
+      )}
     </section>
   )
 }
@@ -1252,15 +1272,9 @@ type TrendModalProps = {
 }
 
 const formatHourLabel = (timestamp: number, timeFormat: TimeFormat) => {
-  const date = new Date(timestamp * 1000)
-  const options: Intl.DateTimeFormatOptions = {
-    hour: timeFormat === "12h" ? "numeric" : "2-digit",
-    hour12: timeFormat === "12h",
-  }
-  if (timeFormat !== "12h") {
-    options.minute = "2-digit"
-  }
-  return new Intl.DateTimeFormat("en-US", options).format(date)
+  return timeFormat === "12h"
+    ? formatLocalHour(timestamp, timeFormat)
+    : formatLocalTime(timestamp, timeFormat)
 }
 
 const buildLinePath = (
@@ -2141,6 +2155,7 @@ export function ConditionsTab({
     "idle"
   )
   const [locateError, setLocateError] = useState<string | null>(null)
+  const [now, setNow] = useState(() => Date.now())
   const [locationRevision, setLocationRevision] = useState(0)
   const [recentSearches, setRecentSearches] = useState<LocationSelection[]>([])
   const [thresholdOverrides, setThresholdOverrides] = useState<FlyabilityThresholds>(
@@ -2163,6 +2178,14 @@ export function ConditionsTab({
       ? coords
       : DEFAULT_COORDS
   const activeGpsAccuracy = searchSelection || !useGps ? null : gpsAccuracy
+  const lastUpdatedAt = getLastWeatherFetchTimestamp()
+  const hasLastUpdated = typeof lastUpdatedAt === "number"
+  const lastUpdatedLabel = lastUpdatedAt
+    ? formatLocalTime(lastUpdatedAt, timeFormat)
+    : "--"
+  const lastUpdatedRelative = lastUpdatedAt
+    ? formatRelativeTime(lastUpdatedAt, now)
+    : "--"
 
   const requestGpsLocation = () =>
     new Promise<GeolocationPosition>((resolve, reject) => {
@@ -2181,6 +2204,13 @@ export function ConditionsTab({
     if (!useGps) return
     handleLocateMe()
   }, [useGps])
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      setNow(Date.now())
+    }, 60000)
+    return () => window.clearInterval(interval)
+  }, [])
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -2249,6 +2279,10 @@ export function ConditionsTab({
     if (!weather) return
     setSelectedDayIndex(null)
   }, [weather?.locationName, weather?.forecast?.length])
+
+  const handleWeatherRefresh = () => {
+    setLocationRevision((value) => value + 1)
+  }
 
   const handleSearch = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -3177,6 +3211,28 @@ export function ConditionsTab({
                   {locationSummary}
                 </div>
               </div>
+              <div className="flex flex-wrap items-center gap-3 text-xs uppercase tracking-[0.3em] text-slate-400">
+                {hasLastUpdated ? (
+                  <span>
+                    Last updated:{" "}
+                    <span className="text-slate-200">{lastUpdatedLabel}</span>{" "}
+                    <span className="text-slate-500">({lastUpdatedRelative})</span>
+                  </span>
+                ) : (
+                  <span>
+                    Last updated: <span className="text-slate-200">--</span>
+                  </span>
+                )}
+                {status === "error" && (
+                  <button
+                    type="button"
+                    onClick={handleWeatherRefresh}
+                    className="rounded-full border border-emerald-400/50 bg-emerald-400/10 px-3 py-1 text-[10px] font-semibold uppercase tracking-[0.35em] text-emerald-100 transition hover:border-emerald-300 hover:text-white"
+                  >
+                    Refresh
+                  </button>
+                )}
+              </div>
               <p className="max-w-2xl text-sm leading-relaxed text-slate-300">
                 {weatherBriefing}
               </p>
@@ -3218,6 +3274,7 @@ export function ConditionsTab({
             onSelectDay={(index) => setSelectedDayIndex(index)}
             userThresholds={thresholdOverrides}
             activeCoords={activeCoords}
+            onRefresh={handleWeatherRefresh}
           />
         )}
 
