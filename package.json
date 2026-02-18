@@ -9,7 +9,6 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@nxcode/sdk": "^1.0.13",
     "@supabase/supabase-js": "^2.93.1",
     "@types/mapbox-gl": "^3.4.1",
     "@types/papaparse": "^5.5.2",

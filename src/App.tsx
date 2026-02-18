@@ -1,6 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useState } from "react"
 import { Map, Radar, Settings, ShieldCheck } from "lucide-react"
-import Nxcode from "@nxcode/sdk"
 
 import { AuthGuard } from "./components/AuthGuard"
 import { ConditionsTab } from "./components/ConditionsTab"
@@ -27,12 +26,9 @@ type MapFocus = {
   name?: string | null
 }
 
-type NxUser = {
+type AppUser = {
   id: string
   email?: string | null
-  name?: string | null
-  avatar?: string | null
-  balance?: number
 }
 
 const tabs: Array<{ key: TabKey; label: string; icon: JSX.Element }> = [
@@ -60,74 +56,18 @@ function AppShell() {
   })
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null)
-  const [user, setUser] = useState<NxUser | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [user, setUser] = useState<AppUser | null>(null)
+  const [loading, setLoading] = useState(false )
   const [authError, setAuthError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let mounted = true
-
-    const loadSession = async () => {
-      try {
-        const currentUser = Nxcode.auth.getUser()
-        if (mounted) {
-          setUser(currentUser ?? null)
-        }
-      } catch (error) {
-        if (mounted) {
-          setAuthError(
-            error instanceof Error
-              ? error.message
-              : "Unable to read authentication session."
-          )
-        }
-      } finally {
-        if (mounted) {
-          setLoading(false)
-        }
-      }
-    }
-
-    loadSession()
-
-    const unsubscribe = Nxcode.auth.onAuthStateChange((nextUser) => {
-      if (!mounted) return
-      setAuthError(null)
-      setUser(nextUser ?? null)
-      setLoading(false)
-    })
-
-    return () => {
-      mounted = false
-      unsubscribe?.()
-    }
-  }, [])
-
-  const handleLogin = async () => {
-    try {
-      setAuthError(null)
-      await Nxcode.auth.login()
-    } catch (error) {
-      setAuthError(
-        error instanceof Error
-          ? error.message
-          : "Login failed. Please try again."
-      )
-    }
-  }
+  
+ const handleLogin = async () => {
+  setAuthError("Auth is being migrated to Supabase. Signing in is temporarily disabled.")
+}
 
   const handleLogout = async () => {
-    try {
-      setAuthError(null)
-      await Nxcode.auth.logout()
-    } catch (error) {
-      setAuthError(
-        error instanceof Error
-          ? error.message
-          : "Unable to log out."
-      )
-    }
-  }
+  setUser(null)
+  setAuthError(null)
+}
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -174,7 +114,7 @@ function AppShell() {
                 Sign in to manage sites
               </h2>
               <p className="text-sm text-slate-300">
-                Authenticate with Nxcode to upload, edit, and export site data.
+                Authenticate to upload, edit, and export site data.
               </p>
             </div>
             <div className="mt-6 flex flex-col items-center gap-3">
@@ -183,7 +123,7 @@ function AppShell() {
                 onClick={handleLogin}
                 className="rounded-full bg-emerald-400 px-6 py-3 text-xs font-semibold uppercase tracking-[0.2em] text-slate-950 transition hover:bg-emerald-300"
               >
-                Sign in with Nxcode
+                Sign in
               </button>
               {authError && (
                 <p className="text-xs text-rose-300">{authError}</p>
