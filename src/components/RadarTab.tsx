@@ -180,15 +180,20 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const focusMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const didRunInitialStyleEffectRef = useRef(false)
   const [baseStyle, setBaseStyle] = useState<BaseStyleKey>("streets")
   const [showWeather, setShowWeather] = useState(true)
   const [showTfr, setShowTfr] = useState(true)
   const [showSites, setShowSites] = useState(true)
 
   const mapboxToken = (
-    import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined
+    (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ??
+      import.meta.env.VITE_MAPBOX_TOKEN) as string | undefined
   )?.trim()
-  const weatherApiKey = import.meta.env.VITE_OPENWEATHER_API_KEY as string | undefined
+  const weatherApiKey = (
+    (import.meta.env.VITE_OPENWEATHER_API_KEY ??
+      import.meta.env.VITE_OPENWEATHER_KEY) as string | undefined
+  )?.trim()
   const missingToken = !mapboxToken
 
   const baseStyleOptions = useMemo(
@@ -202,13 +207,19 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
 
   const setLayerVisibility = (layerId: string, isVisible: boolean) => {
     const map = mapRef.current
-    if (!map || !map.getLayer(layerId)) return
+    if (!map || !map.isStyleLoaded() || !map.getLayer(layerId)) return
     map.setLayoutProperty(layerId, "visibility", isVisible ? "visible" : "none")
   }
 
   const syncOverlays = () => {
     const map = mapRef.current
     if (!map) return
+    if (!map.isStyleLoaded()) {
+      map.once("style.load", () => {
+        syncOverlays()
+      })
+      return
+    }
     ensureWeatherLayer(map, weatherApiKey)
     ensureTfrLayer(map)
     setLayerVisibility(WEATHER_LAYER_ID, showWeather && !!weatherApiKey)
@@ -272,12 +283,17 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       map.remove()
       mapRef.current = null
       focusMarkerRef.current = null
+      didRunInitialStyleEffectRef.current = false
     }
   }, [missingToken, mapboxToken])
 
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
+    if (!didRunInitialStyleEffectRef.current) {
+      didRunInitialStyleEffectRef.current = true
+      return
+    }
     map.once("style.load", () => {
       syncOverlays()
       syncMarkers()

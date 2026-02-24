@@ -1,0 +1,5 @@
+# Supabase CLI local project config (minimal)
+# This codifies function auth behavior so dashboard toggles don't drift.
+
+[functions.aviation-proxy]
+verify_jwt = false

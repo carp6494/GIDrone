@@ -1,10 +1,23 @@
-import React, { Suspense, lazy, useEffect, useMemo, useState } from "react"
-import { Map, Radar, Settings, ShieldCheck } from "lucide-react"
+import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
+import {
+  ChevronDown,
+  LogIn,
+  LogOut,
+  Mail,
+  Map,
+  Radar,
+  RefreshCcw,
+  Settings,
+  ShieldCheck,
+  User as UserIcon,
+} from "lucide-react"
 import type { Session, User } from "@supabase/supabase-js"
 
 import { supabase } from "./lib/supabase"
+import { applyTheme, getStoredTheme, storeTheme, type ThemeMode } from "./lib/theme"
 
 import { AuthGuard } from "./components/AuthGuard"
+import { AuthSplash } from "./components/AuthSplash"
 import { ConditionsTab } from "./components/ConditionsTab"
 import { SettingsModal } from "./components/SettingsModal"
 
@@ -82,9 +95,12 @@ function AppShell() {
     const stored = getStoredValue("gi-drone:timeFormat", "24h")
     return stored === "12h" ? "12h" : "24h"
   })
+  const [theme, setTheme] = useState<ThemeMode>(() => getStoredTheme())
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
+  const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null)
+  const profileMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
@@ -98,7 +114,10 @@ function AppShell() {
       setAuthError(null)
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
-        options: { redirectTo },
+        options: {
+          redirectTo,
+          queryParams: { prompt: "select_account" },
+        },
       })
       if (error) throw error
     } catch (error) {
@@ -111,13 +130,15 @@ function AppShell() {
       setAuthError(null)
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "azure",
-        options: { redirectTo, scopes: "openid profile email User.Read" },
+        options: {
+          redirectTo,
+          scopes: "openid profile email User.Read",
+          queryParams: { prompt: "select_account" },
+        },
       })
       if (error) throw error
     } catch (error) {
-      setAuthError(
-        error instanceof Error ? error.message : "Microsoft login failed. Please try again."
-      )
+      setAuthError(error instanceof Error ? error.message : "Microsoft login failed. Please try again.")
     }
   }
 
@@ -150,6 +171,17 @@ function AppShell() {
     } catch (error) {
       setAuthError(error instanceof Error ? error.message : "Unable to log out.")
     }
+  }
+
+  const handleSwitchAccount = async () => {
+    await handleLogout()
+  }
+
+  const closeProfileMenu = () => setIsProfileMenuOpen(false)
+
+  const runMenuAction = (action: () => void | Promise<void>) => {
+    closeProfileMenu()
+    void action()
   }
 
   useEffect(() => {
@@ -268,6 +300,52 @@ function AppShell() {
   }, [])
 
   useEffect(() => {
+    if (!isProfileMenuOpen) return
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return
+      if (profileMenuRef.current?.contains(event.target)) return
+      setIsProfileMenuOpen(false)
+    }
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setIsProfileMenuOpen(false)
+    }
+
+    document.addEventListener("pointerdown", onPointerDown)
+    document.addEventListener("keydown", onKeyDown)
+
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown)
+      document.removeEventListener("keydown", onKeyDown)
+    }
+  }, [isProfileMenuOpen])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+
+    applyTheme(theme)
+    storeTheme(theme)
+
+    if (theme !== "system") return
+
+    const mq = window.matchMedia("(prefers-color-scheme: dark)")
+    const legacyMq = mq as MediaQueryList & {
+      addListener?: (listener: () => void) => void
+      removeListener?: (listener: () => void) => void
+    }
+    const onChange = () => applyTheme("system")
+
+    if ("addEventListener" in mq) mq.addEventListener("change", onChange)
+    else legacyMq.addListener?.(onChange)
+
+    return () => {
+      if ("removeEventListener" in mq) mq.removeEventListener("change", onChange)
+      else legacyMq.removeListener?.(onChange)
+    }
+  }, [theme])
+
+  useEffect(() => {
     if (typeof window === "undefined") return
     window.localStorage.setItem("gi-drone:unit", unit)
   }, [unit])
@@ -374,9 +452,9 @@ function AppShell() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-950 text-slate-100">
+      <div className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
         <div className="flex min-h-screen items-center justify-center">
-          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 px-6 py-4 text-sm text-slate-300">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50/90 px-6 py-4 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300">
             Loading authentication session...
           </div>
         </div>
@@ -384,28 +462,160 @@ function AppShell() {
     )
   }
 
+  if (!user) {
+    return (
+      <AuthSplash
+        onSignInGoogle={handleGoogleLogin}
+        onSignInMicrosoft={handleMicrosoftLogin}
+        onSendMagicLink={handleEmailLogin}
+        email={email}
+        onEmailChange={setEmail}
+        authError={authError}
+      />
+    )
+  }
+
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="relative min-h-screen overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(15,23,42,0.9),_transparent_60%)]" />
-        <div className="pointer-events-none absolute -left-32 top-20 h-80 w-80 rounded-full bg-emerald-500/15 blur-[140px]" />
-        <div className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 rounded-full bg-cyan-500/15 blur-[160px]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(226,232,240,0.85),_transparent_65%)] dark:hidden" />
+        <div className="pointer-events-none absolute inset-0 hidden bg-[radial-gradient(circle_at_top,_rgba(15,23,42,0.9),_transparent_60%)] dark:block" />
+        <div className="pointer-events-none absolute -left-32 top-20 h-80 w-80 rounded-full bg-emerald-500/10 blur-[140px] dark:bg-emerald-500/15" />
+        <div className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 rounded-full bg-cyan-500/10 blur-[160px] dark:bg-cyan-500/15" />
 
         <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-10 px-6 py-12">
-          <header className="flex flex-col items-center gap-6 text-center">
+          <div ref={profileMenuRef} className="absolute right-6 top-6 z-30">
+            <button
+              type="button"
+              onClick={() => setIsProfileMenuOpen((open) => !open)}
+              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-900/85 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-900"
+              aria-haspopup="menu"
+              aria-expanded={isProfileMenuOpen}
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
+                <UserIcon className="h-4 w-4" />
+              </span>
+              <span className="hidden max-w-[10rem] truncate text-xs font-medium sm:block">
+                {user?.email ?? "Profile"}
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 transition ${isProfileMenuOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+
+            {isProfileMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute right-0 mt-2 w-72 rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl shadow-slate-900/10 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-slate-950/40"
+              >
+                <div className="rounded-xl px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+                  <p className="font-medium text-slate-700 dark:text-slate-200">
+                    {user?.email ?? "Not signed in"}
+                  </p>
+                </div>
+
+                <div className="my-1 h-px bg-slate-200 dark:bg-slate-800" />
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsOpen(true)
+                    closeProfileMenu()
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80"
+                >
+                  <Settings className="h-4 w-4" />
+                  Settings
+                </button>
+
+                {user ? (
+                  <>
+                    <div className="my-1 h-px bg-slate-200 dark:bg-slate-800" />
+
+                    <div className="px-3 pb-1 pt-1 text-[11px] uppercase tracking-[0.16em] text-slate-500 dark:text-slate-400">
+                      Account
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => runMenuAction(handleSwitchAccount)}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80"
+                    >
+                      <RefreshCcw className="h-4 w-4" />
+                      Switch account
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => runMenuAction(handleLogout)}
+                      className="mt-1 flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-rose-700 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/10"
+                    >
+                      <LogOut className="h-4 w-4" />
+                      Logout
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="my-1 h-px bg-slate-200 dark:bg-slate-800" />
+
+                    <button
+                      type="button"
+                      onClick={() =>
+                        runMenuAction(async () => {
+                          setActiveTab("sites")
+                          await handleGoogleLogin()
+                        })
+                      }
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80"
+                    >
+                      <LogIn className="h-4 w-4" />
+                      Sign in with Google
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        runMenuAction(async () => {
+                          setActiveTab("sites")
+                          await handleMicrosoftLogin()
+                        })
+                      }
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80"
+                    >
+                      <LogIn className="h-4 w-4" />
+                      Sign in with Microsoft
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        runMenuAction(async () => {
+                          setActiveTab("sites")
+                          await handleEmailLogin()
+                        })
+                      }
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-800/80"
+                    >
+                      <Mail className="h-4 w-4" />
+                      Send magic link
+                    </button>
+                  </>
+                )}
+              </div>
+            ) : null}
+          </div>
+
+          <header className="flex flex-col items-center gap-6 pt-14 text-center sm:pt-4">
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-[0.6em] text-emerald-300">GI Drone</p>
-              <h1 className="text-4xl font-semibold text-white md:text-5xl">
+              <h1 className="text-4xl font-semibold text-slate-900 dark:text-white md:text-5xl">
                 Aviation Safety Analytics
               </h1>
-              <p className="max-w-2xl text-sm text-slate-300 md:text-base">
+              <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300 md:text-base">
                 Professional-grade aviation weather, customizable safety thresholds, and integrated GIS
                 layers for precision drone mission planning.
               </p>
             </div>
 
             <div className="flex w-full flex-col items-center">
-              <div className="mx-auto grid w-full max-w-xl grid-cols-4 gap-2 rounded-full border border-slate-800 bg-slate-900/70 p-1 text-xs uppercase tracking-[0.2em] text-slate-400">
+              <div className="mx-auto grid w-full max-w-xl grid-cols-3 gap-2 rounded-full border border-slate-200 bg-slate-50/90 p-1 text-xs uppercase tracking-[0.2em] text-slate-500 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-400">
                 {tabs.map((tab) => (
                   <button
                     key={tab.key}
@@ -414,76 +624,27 @@ function AppShell() {
                     className={`flex w-full items-center justify-center gap-2 rounded-full px-3 py-2 transition ${
                       activeTab === tab.key
                         ? "bg-emerald-400 text-slate-950"
-                        : "text-slate-400 hover:text-white"
+                        : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
                     }`}
                   >
                     {tab.icon}
                     {tab.label}
                   </button>
                 ))}
-
-                <button
-                  type="button"
-                  onClick={() => setIsSettingsOpen(true)}
-                  className={`flex w-full items-center justify-center gap-2 rounded-full px-3 py-2 transition ${
-                    isSettingsOpen ? "bg-slate-800 text-white" : "text-slate-400 hover:text-white"
-                  }`}
-                >
-                  <Settings className="h-4 w-4" />
-                  Settings
-                </button>
               </div>
             </div>
 
-            <div className="w-full max-w-xl rounded-2xl border border-slate-800 bg-slate-900/70 p-4 text-left text-xs text-slate-300">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="text-slate-200">{user ? "Signed in" : "Not signed in"}</p>
-                  <p className="text-xs text-slate-400">{user?.email ?? "Authentication ready."}</p>
-                </div>
-
-                {user ? (
-                  <button
-                    type="button"
-                    onClick={handleLogout}
-                    className="rounded-full border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200"
-                  >
-                    Log out
-                  </button>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab("sites")
-                        handleGoogleLogin()
-                      }}
-                      className="rounded-full border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200"
-                    >
-                      Google
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setActiveTab("sites")
-                        handleMicrosoftLogin()
-                      }}
-                      className="rounded-full border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200"
-                    >
-                      Microsoft
-                    </button>
-                  </div>
-                )}
+            {authError ? (
+              <div className="w-full max-w-xl rounded-2xl border border-rose-200 bg-rose-50/80 p-3 text-left text-sm text-rose-700 dark:border-rose-800/60 dark:bg-rose-950/30 dark:text-rose-300">
+                {authError}
               </div>
-
-              {authError && <p className="mt-2 text-rose-300">{authError}</p>}
-            </div>
+            ) : null}
           </header>
 
           <PanelErrorBoundary>
             <Suspense
               fallback={
-                <div className="rounded-3xl border border-slate-800 bg-slate-900/60 p-6 text-sm text-slate-300">
+                <div className="rounded-3xl border border-slate-200 bg-white/70 p-6 text-sm text-slate-600 dark:border-slate-800 dark:bg-slate-900/60 dark:text-slate-300">
                   Loading mission panel...
                 </div>
               }
@@ -498,6 +659,8 @@ function AppShell() {
             onUnitChange={setUnit}
             timeFormat={timeFormat}
             onTimeFormatChange={setTimeFormat}
+            theme={theme}
+            onThemeChange={setTheme}
             useGps={useGps}
             onUseGpsChange={setUseGps}
             onClose={() => setIsSettingsOpen(false)}
