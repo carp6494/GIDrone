@@ -9,8 +9,6 @@ import {
 import type { User } from "@supabase/supabase-js"
 
 import {
-  getSupabaseAuthState,
-  onSupabaseAuthStateChange,
   supabase,
 } from "../lib/supabase"
 
@@ -45,13 +43,15 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
 
     const loadSession = async () => {
       try {
-        const { user: currentUser, error: authError } =
-          await getSupabaseAuthState()
+        const {
+          data: { session },
+          error: authError,
+        } = await supabase.auth.getSession()
         if (!mounted) return
         if (authError) {
           setError(authError.message)
         }
-        setUser(currentUser ?? null)
+        setUser(session?.user ?? null)
       } catch (sessionError) {
         if (!mounted) return
         setError(
@@ -68,10 +68,12 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
 
     loadSession()
 
-    const { subscription } = onSupabaseAuthStateChange((nextUser) => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
       if (!mounted) return
       setError(null)
-      setUser(nextUser ?? null)
+      setUser(session?.user ?? null)
       setLoading(false)
     })
 
