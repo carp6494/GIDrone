@@ -37,6 +37,8 @@ import {
   getLastWeatherFetchTimestamp,
   getKPIndex,
 } from "../services/weatherService"
+import { AviationPanel } from "./AviationPanel"
+import type { TfrMapFocus } from "../lib/aviation/types"
 import { formatLocalHour, formatLocalTime, type TimeFormat } from "../utils/timeFormat"
 import {
   calculateFlyability,
@@ -55,6 +57,7 @@ type ConditionsTabProps = {
   useGps: boolean
   timeFormat: TimeFormat
   onTabChange: (tab: "conditions" | "radar" | "sites") => void
+  onRadarFocus?: (focus: TfrMapFocus) => void
 }
 
 type LocationSelection = {
@@ -2177,6 +2180,7 @@ export function ConditionsTab({
   useGps,
   timeFormat,
   onTabChange,
+  onRadarFocus,
 }: ConditionsTabProps) {
   const [coords, setCoords] = useState(DEFAULT_COORDS)
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null)
@@ -2752,8 +2756,6 @@ export function ConditionsTab({
         })
       : "Awaiting telemetry."
   const { metars, notams, tfrs } = MOCK_AVIATION_DATA
-  const tfrCount = tfrs.length
-  const notamCount = notams.length
   const forecastDays = weather?.forecast ?? []
   const hourlySnapshot = weather?.hourly ?? []
   const twilightWindowSeconds = 30 * 60
@@ -3331,33 +3333,33 @@ export function ConditionsTab({
                 {weatherBriefing}
               </p>
             </div>
-            <div className="grid w-full gap-3 sm:grid-cols-2 sm:auto-rows-fr md:flex-1 md:max-w-none md:items-stretch md:gap-4">
-              <button
-                type="button"
-                onClick={() => setShowTfrs(true)}
-                className="inline-flex h-full w-full items-center justify-between gap-3 rounded-full border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-xl font-semibold tracking-[0.25em] text-amber-200 transition hover:border-amber-200/70 hover:text-amber-50"
-              >
-                TFRs
-                <span className="ml-2 text-xl text-amber-100">{tfrCount}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowNotams(true)}
-                className="inline-flex h-full w-full items-center justify-between gap-3 rounded-full border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-xl font-semibold tracking-[0.25em] text-emerald-200 transition hover:border-emerald-200/70 hover:text-emerald-50"
-              >
-                NOTAMs
-                <span className="text-xl text-emerald-100">{notamCount}</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setShowMetar(true)}
-                className="inline-flex h-full w-full items-center justify-center rounded-full border border-slate-700/80 bg-slate-950/80 px-4 py-3 text-xl font-semibold tracking-[0.3em] text-slate-200 transition hover:border-emerald-300/60 hover:text-white sm:col-span-2"
-              >
-                View Local METARs
-              </button>
+            <div className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/70 p-4 md:flex-1 md:max-w-md">
+              <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
+                Airspace feeds
+              </p>
+              <p className="mt-2 text-sm font-semibold text-white">
+                METAR + TFR via Supabase edge proxies
+              </p>
+              <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                Nearby aviation data is loaded below using US-only proxy/caching endpoints. Use a TFR
+                map button to jump straight to the radar overlay.
+              </p>
             </div>
           </div>
         </header>
+
+        <AviationPanel
+          lat={activeCoords.lat}
+          lon={activeCoords.lon}
+          onMapTfr={(item) => {
+            if (!item.bbox) return
+            onTabChange("radar")
+            onRadarFocus?.({
+              bounds: item.bbox,
+              notamId: item.notamId,
+            })
+          }}
+        />
 
         {weather && (
           <ForecastSection
@@ -3487,7 +3489,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<CloudSun size={32} />}
                   label="Temperature"
-                  labelClassName="text-[clamp(0.80rem,1vw,0.74rem)] tracking-[0.14em]"
+                  labelClassName="text-[clamp(0.75rem,1vw,0.74rem)] tracking-[0.14em]"
                   value={`${formatValue(activeData?.tempF ?? weather.current.tempF, 0)}°F`}
                   description="Ambient reading"
                   status={flyability.metrics.temperature}
@@ -3510,7 +3512,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<Gauge size={32} />}
                   label="Barometric Pressure"
-                  labelClassName="text-[clamp(0.68rem,1.35vw,0.78rem)] tracking-[0.25em]"
+                  labelClassName="text-[clamp(0.65rem,1.35vw,0.78rem)] tracking-[0.25em]"
                   value={
                     <>
                       {formatValue(activeData?.pressure ?? weather.current.pressure, 0)}
@@ -3580,7 +3582,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<CloudDrizzle size={32} />}
                   label="Precipitation"
-                  labelClassName="text-[clamp(0.75rem,0.95vw,0.72rem)] tracking-[0.12em]"
+                  labelClassName="text-[clamp(0.70rem,0.95vw,0.72rem)] tracking-[0.12em]"
                   value={
                     activeData?.isForecast
                       ? activeData.precipitationType ??
@@ -3614,7 +3616,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<CloudDrizzle size={32} />}
                   label="Precipitation Probability"
-                  labelClassName="text-[clamp(0.68rem,1.35vw,0.68rem)] tracking-[0.25em]"
+                  labelClassName="text-[clamp(0.65rem,1.35vw,0.68rem)] tracking-[0.25em]"
                   value={
                     activeData?.precipitationProbability !== null &&
                     activeData?.precipitationProbability !== undefined

@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
-import { Layers, MapPin, Radar, Satellite, Target } from "lucide-react"
+import { Layers, Loader2, MapPin, Radar, Satellite, Target } from "lucide-react"
+
+import { useTfrs } from "../hooks/useTfrs"
+import type { BoundsTuple, TfrFeatureProperties } from "../lib/aviation/types"
 
 type BaseStyleKey = "streets" | "satellite" | "hybrid"
 
@@ -11,8 +14,22 @@ type SiteLocation = {
   lon: number
 }
 
+type RadarFocusPoint = {
+  lat: number
+  lon: number
+  name?: string | null
+}
+
+type RadarFocusBounds = {
+  bounds: BoundsTuple
+  notamId: string
+  name?: string | null
+}
+
+type RadarFocusLocation = RadarFocusPoint | RadarFocusBounds
+
 type RadarTabProps = {
-  focusLocation?: { lat: number; lon: number; name?: string | null }
+  focusLocation?: RadarFocusLocation
 }
 
 const BASE_STYLES: Record<BaseStyleKey, { label: string; style: string }> = {
@@ -23,46 +40,9 @@ const BASE_STYLES: Record<BaseStyleKey, { label: string; style: string }> = {
 
 const DEFAULT_CENTER: [number, number] = [-95.3698, 29.7604]
 
-const MOCK_TFR_DATA: GeoJSON.FeatureCollection<GeoJSON.Polygon> = {
+const EMPTY_TFR_DATA: GeoJSON.FeatureCollection<GeoJSON.Geometry> = {
   type: "FeatureCollection",
-  features: [
-    {
-      type: "Feature",
-      properties: {
-        name: "TFR: Event perimeter",
-      },
-      geometry: {
-        type: "Polygon",
-        coordinates: [
-          [
-            [-95.45, 29.8],
-            [-95.31, 29.8],
-            [-95.31, 29.71],
-            [-95.45, 29.71],
-            [-95.45, 29.8],
-          ],
-        ],
-      },
-    },
-    {
-      type: "Feature",
-      properties: {
-        name: "NOTAM: Stadium buffer",
-      },
-      geometry: {
-        type: "Polygon",
-        coordinates: [
-          [
-            [-95.52, 29.78],
-            [-95.47, 29.78],
-            [-95.47, 29.73],
-            [-95.52, 29.73],
-            [-95.52, 29.78],
-          ],
-        ],
-      },
-    },
-  ],
+  features: [],
 }
 
 const FLIGHT_SITES: SiteLocation[] = [
@@ -73,9 +53,9 @@ const FLIGHT_SITES: SiteLocation[] = [
 
 const WEATHER_SOURCE_ID = "weather-radar"
 const WEATHER_LAYER_ID = "weather-radar-layer"
-const TFR_SOURCE_ID = "tfr-notam"
-const TFR_FILL_LAYER_ID = "tfr-notam-fill"
-const TFR_LINE_LAYER_ID = "tfr-notam-line"
+const TFR_SOURCE_ID = "tfr-zones"
+const TFR_FILL_LAYER_ID = "tfr-zones-fill"
+const TFR_LINE_LAYER_ID = "tfr-zones-line"
 const OPEN_WEATHER_TILE_LAYER = "precipitation_new"
 
 const createMarkerElement = () => {
@@ -90,6 +70,64 @@ const createFocusMarkerElement = () => {
   element.className =
     "h-4 w-4 rounded-full bg-amber-300 ring-4 ring-amber-300/30 shadow-[0_0_16px_rgba(251,191,36,0.9)]"
   return element
+}
+
+const isBoundsFocus = (focusLocation?: RadarFocusLocation): focusLocation is RadarFocusBounds =>
+  Boolean(focusLocation && "bounds" in focusLocation)
+
+const formatPopupTime = (value?: string | null) => {
+  if (!value) return "--"
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return value
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(parsed)
+}
+
+const escapeHtml = (value: string) =>
+  value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+
+const buildTfrPopupHtml = (properties: Partial<TfrFeatureProperties>) => {
+  const title = properties.notamId ? escapeHtml(String(properties.notamId)) : "TFR"
+  const subtitle = [properties.type, properties.facility, properties.state]
+    .filter(Boolean)
+    .map((value) => escapeHtml(String(value)))
+    .join(" | ")
+  const description = properties.description ? escapeHtml(String(properties.description)) : ""
+  const effectiveWindow = `${formatPopupTime(properties.startsAt)} to ${formatPopupTime(
+    properties.endsAt
+  )}`
+  const fAAUrl =
+    typeof properties.detailPageUrl === "string" && properties.detailPageUrl.trim()
+      ? properties.detailPageUrl
+      : typeof properties.xmlUrl === "string" && properties.xmlUrl.trim()
+        ? properties.xmlUrl
+        : ""
+
+  return `
+    <div style="font-size:12px;color:#0f172a;max-width:300px;line-height:1.4;">
+      <div style="font-weight:700;font-size:13px;">${title}</div>
+      ${subtitle ? `<div style="margin-top:2px;color:#334155;">${subtitle}</div>` : ""}
+      <div style="margin-top:6px;"><strong>Effective:</strong> ${escapeHtml(effectiveWindow)}</div>
+      ${description ? `<div style="margin-top:6px;">${description}</div>` : ""}
+      ${
+        fAAUrl
+          ? `<div style="margin-top:8px;"><a href="${escapeHtml(
+              fAAUrl
+            )}" target="_blank" rel="noopener noreferrer">FAA detail</a></div>`
+          : ""
+      }
+    </div>
+  `
 }
 
 const ensureWeatherLayer = (map: mapboxgl.Map, apiKey?: string) => {
@@ -115,21 +153,28 @@ const ensureWeatherLayer = (map: mapboxgl.Map, apiKey?: string) => {
   }
 }
 
-const ensureTfrLayer = (map: mapboxgl.Map) => {
-  if (!map.getSource(TFR_SOURCE_ID)) {
+const ensureTfrLayer = (
+  map: mapboxgl.Map,
+  data: GeoJSON.FeatureCollection<GeoJSON.Geometry>
+) => {
+  const existingSource = map.getSource(TFR_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
+  if (!existingSource) {
     map.addSource(TFR_SOURCE_ID, {
       type: "geojson",
-      data: MOCK_TFR_DATA,
+      data,
     })
+  } else {
+    existingSource.setData(data)
   }
+
   if (!map.getLayer(TFR_FILL_LAYER_ID)) {
     map.addLayer({
       id: TFR_FILL_LAYER_ID,
       type: "fill",
       source: TFR_SOURCE_ID,
       paint: {
-        "fill-color": "#f43f5e",
-        "fill-opacity": 0.2,
+        "fill-color": "#f59e0b",
+        "fill-opacity": 0.14,
       },
     })
   }
@@ -139,19 +184,74 @@ const ensureTfrLayer = (map: mapboxgl.Map) => {
       type: "line",
       source: TFR_SOURCE_ID,
       paint: {
-        "line-color": "#fb7185",
+        "line-color": "#fbbf24",
         "line-width": 2,
+        "line-opacity": 0.95,
       },
     })
   }
 }
 
+const bindTfrInteractions = (
+  map: mapboxgl.Map,
+  popupRef: MutableRefObject<mapboxgl.Popup | null>,
+  boundRef: MutableRefObject<boolean>
+) => {
+  if (boundRef.current) return
+
+  const handleMouseEnter = () => {
+    map.getCanvas().style.cursor = "pointer"
+  }
+
+  const handleMouseLeave = () => {
+    map.getCanvas().style.cursor = ""
+  }
+
+  const handleClick = (event: mapboxgl.MapLayerMouseEvent) => {
+    const clicked = event.features?.[0]
+    if (!clicked || !clicked.properties) return
+    const properties = clicked.properties as Partial<TfrFeatureProperties>
+    const html = buildTfrPopupHtml(properties)
+
+    popupRef.current?.remove()
+    popupRef.current = new mapboxgl.Popup({ offset: 14, closeButton: true })
+      .setLngLat(event.lngLat)
+      .setHTML(html)
+      .addTo(map)
+  }
+
+  map.on("mouseenter", TFR_FILL_LAYER_ID, handleMouseEnter)
+  map.on("mouseleave", TFR_FILL_LAYER_ID, handleMouseLeave)
+  map.on("mouseenter", TFR_LINE_LAYER_ID, handleMouseEnter)
+  map.on("mouseleave", TFR_LINE_LAYER_ID, handleMouseLeave)
+  map.on("click", TFR_FILL_LAYER_ID, handleClick)
+  map.on("click", TFR_LINE_LAYER_ID, handleClick)
+
+  boundRef.current = true
+}
+
 const applyFocusLocation = (
   map: mapboxgl.Map,
-  focusLocation: { lat: number; lon: number; name?: string | null } | undefined,
+  focusLocation: RadarFocusLocation | undefined,
   focusMarkerRef: MutableRefObject<mapboxgl.Marker | null>
 ) => {
   if (!focusLocation) return
+
+  if (isBoundsFocus(focusLocation)) {
+    const [minLon, minLat, maxLon, maxLat] = focusLocation.bounds
+    const bounds = new mapboxgl.LngLatBounds([minLon, minLat], [maxLon, maxLat])
+    map.fitBounds(bounds, {
+      padding: 60,
+      maxZoom: 11.5,
+      duration: 900,
+    })
+    if (focusMarkerRef.current) {
+      focusMarkerRef.current.remove()
+      focusMarkerRef.current = null
+    }
+    return
+  }
+
   const { lat, lon, name } = focusLocation
   map.flyTo({
     center: [lon, lat],
@@ -180,7 +280,9 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const focusMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const tfrPopupRef = useRef<mapboxgl.Popup | null>(null)
   const didRunInitialStyleEffectRef = useRef(false)
+  const tfrInteractionsBoundRef = useRef(false)
   const [baseStyle, setBaseStyle] = useState<BaseStyleKey>("streets")
   const [showWeather, setShowWeather] = useState(true)
   const [showTfr, setShowTfr] = useState(true)
@@ -195,6 +297,30 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       import.meta.env.VITE_OPENWEATHER_KEY) as string | undefined
   )?.trim()
   const missingToken = !mapboxToken
+
+  const tfrQueryCenter = useMemo(() => {
+    if (focusLocation) {
+      if (isBoundsFocus(focusLocation)) {
+        const [minLon, minLat, maxLon, maxLat] = focusLocation.bounds
+        return {
+          lat: (minLat + maxLat) / 2,
+          lon: (minLon + maxLon) / 2,
+        }
+      }
+      return { lat: focusLocation.lat, lon: focusLocation.lon }
+    }
+
+    return { lat: DEFAULT_CENTER[1], lon: DEFAULT_CENTER[0] }
+  }, [focusLocation])
+
+  const tfrs = useTfrs({
+    lat: tfrQueryCenter.lat,
+    lon: tfrQueryCenter.lon,
+    radiusMiles: 150,
+  })
+  const tfrGeoJson = tfrs.data?.featureCollection ?? EMPTY_TFR_DATA
+  const hasTfrFeatures = tfrGeoJson.features.length > 0
+  const nearbyTfrCount = tfrs.data?.items.length ?? 0
 
   const baseStyleOptions = useMemo(
     () =>
@@ -221,7 +347,8 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       return
     }
     ensureWeatherLayer(map, weatherApiKey)
-    ensureTfrLayer(map)
+    ensureTfrLayer(map, tfrGeoJson)
+    bindTfrInteractions(map, tfrPopupRef, tfrInteractionsBoundRef)
     setLayerVisibility(WEATHER_LAYER_ID, showWeather && !!weatherApiKey)
     setLayerVisibility(TFR_FILL_LAYER_ID, showTfr)
     setLayerVisibility(TFR_LINE_LAYER_ID, showTfr)
@@ -260,10 +387,7 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
 
     mapRef.current = map
 
-    map.addControl(
-      new mapboxgl.NavigationControl({ showCompass: false }),
-      "top-right"
-    )
+    map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right")
     map.addControl(
       new mapboxgl.GeolocateControl({
         positionOptions: { enableHighAccuracy: true },
@@ -280,10 +404,12 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
     })
 
     return () => {
+      tfrPopupRef.current?.remove()
       map.remove()
       mapRef.current = null
       focusMarkerRef.current = null
       didRunInitialStyleEffectRef.current = false
+      tfrInteractionsBoundRef.current = false
     }
   }, [missingToken, mapboxToken])
 
@@ -294,6 +420,8 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       didRunInitialStyleEffectRef.current = true
       return
     }
+    tfrPopupRef.current?.remove()
+    tfrInteractionsBoundRef.current = false
     map.once("style.load", () => {
       syncOverlays()
       syncMarkers()
@@ -303,7 +431,7 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
 
   useEffect(() => {
     syncOverlays()
-  }, [showWeather, showTfr, weatherApiKey])
+  }, [showWeather, showTfr, weatherApiKey, tfrGeoJson])
 
   useEffect(() => {
     syncMarkers()
@@ -319,15 +447,13 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
     <section className="space-y-6">
       <header className="flex flex-col gap-4 rounded-3xl border border-slate-800/70 bg-slate-900/60 p-6 md:flex-row md:items-center md:justify-between">
         <div className="space-y-2">
-          <p className="text-xs uppercase tracking-[0.4em] text-emerald-300">
-            Radar & Layers
-          </p>
+          <p className="text-xs uppercase tracking-[0.4em] text-emerald-300">Radar & Layers</p>
           <h2 className="text-3xl font-semibold text-white md:text-4xl">
             Mission Airspace Overview
           </h2>
           <p className="text-sm text-slate-300">
-            Blend live precipitation sweeps, restricted zones, and your launch
-            sites in one operational view.
+            Blend live precipitation sweeps, active TFR polygons, and your launch sites in one
+            operational view.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-2 text-xs uppercase tracking-[0.2em] text-slate-400">
@@ -349,10 +475,7 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       </header>
 
       <div className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/40">
-        <div
-          ref={mapContainerRef}
-          className="h-[60vh] w-full sm:h-[65vh] lg:h-[70vh]"
-        />
+        <div ref={mapContainerRef} className="h-[60vh] w-full sm:h-[65vh] lg:h-[70vh]" />
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
 
@@ -379,12 +502,12 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
               onClick={() => setShowTfr((prev) => !prev)}
               className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
                 showTfr
-                  ? "border-rose-400/70 bg-rose-500/15 text-rose-200"
+                  ? "border-amber-300/70 bg-amber-400/15 text-amber-100"
                   : "border-slate-800 text-slate-400 hover:text-white"
               }`}
             >
               <Target className="mr-2 inline h-3 w-3" />
-              TFR / NOTAM
+              TFR
             </button>
             <button
               type="button"
@@ -405,6 +528,22 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
               <Satellite className="h-4 w-4 text-slate-400" />
               <span>Geolocate + Zoom controls active</span>
             </div>
+            {tfrs.isLoading || tfrs.isRefreshing ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-400/10 px-3 py-1 text-amber-100">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading nearby TFRs...
+              </span>
+            ) : (
+              <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-amber-100">
+                {nearbyTfrCount} nearby TFR{nearbyTfrCount === 1 ? "" : "s"}
+                {!hasTfrFeatures ? " (no geometry in range)" : ""}
+              </span>
+            )}
+            {tfrs.error ? (
+              <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
+                {tfrs.error}
+              </span>
+            ) : null}
             {missingToken && (
               <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-200">
                 Add VITE_MAPBOX_ACCESS_TOKEN to view the map.

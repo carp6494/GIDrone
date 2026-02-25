@@ -1,0 +1,446 @@
+import { useEffect, useMemo, useState } from "react"
+import { Loader2, Map as MapIcon, RefreshCcw } from "lucide-react"
+
+import { useMetars } from "../hooks/useMetars"
+import { useNotams } from "../hooks/useNotams"
+import { useTfrs } from "../hooks/useTfrs"
+import type { AviationMetar, AviationStation, NotamItem, TfrItem } from "../lib/aviation/types"
+import { AviationTile } from "./AviationTile"
+
+type AviationPanelProps = {
+  lat: number
+  lon: number
+  onMapTfr?: (item: TfrItem) => void
+}
+
+type MetarListRow = {
+  station: AviationStation
+  metar: AviationMetar | null
+}
+
+const AVIATION_RADIUS_OPTIONS = [25, 50, 100, 250] as const
+type AviationRadiusMiles = (typeof AVIATION_RADIUS_OPTIONS)[number]
+const AVIATION_RADIUS_STORAGE_KEY = "aviationRadiusMiles"
+
+const readStoredRadiusMiles = (): AviationRadiusMiles => {
+  if (typeof window === "undefined") return 50
+
+  const rawValue = window.localStorage.getItem(AVIATION_RADIUS_STORAGE_KEY)
+  const parsedValue = Number(rawValue)
+
+  return AVIATION_RADIUS_OPTIONS.includes(parsedValue as AviationRadiusMiles)
+    ? (parsedValue as AviationRadiusMiles)
+    : 50
+}
+
+const formatTimeLabel = (value: string | null | undefined) => {
+  if (!value) return "--"
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return value
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  }).format(date)
+}
+
+const formatTimeWindow = (startsAt: string | null, endsAt: string | null) => {
+  const start = formatTimeLabel(startsAt)
+  const end = formatTimeLabel(endsAt)
+  if (start === "--" && end === "--") return "Time window unavailable"
+  return `${start} to ${end}`
+}
+
+const asNonEmptyString = (value: unknown) => {
+  if (typeof value !== "string") return null
+  const trimmed = value.trim()
+  return trimmed ? trimmed : null
+}
+
+const resolveNotamId = (item: NotamItem, index: number) =>
+  asNonEmptyString(item.notamId) ??
+  asNonEmptyString(item.id) ??
+  asNonEmptyString(item["number"]) ??
+  `NOTAM ${index + 1}`
+
+const resolveNotamType = (item: NotamItem) =>
+  asNonEmptyString(item.type) ??
+  asNonEmptyString(item.category) ??
+  asNonEmptyString(item.subtype)
+
+const resolveNotamLocation = (item: NotamItem) =>
+  asNonEmptyString(item.location) ??
+  (() => {
+    const facilityLabel = [asNonEmptyString(item.facility), asNonEmptyString(item.state)]
+      .filter(Boolean)
+      .join(" | ")
+    return facilityLabel || null
+  })()
+
+const resolveNotamDescription = (item: NotamItem) =>
+  asNonEmptyString(item.description) ??
+  asNonEmptyString(item["text"]) ??
+  asNonEmptyString(item["rawText"])
+
+const resolveNotamStartsAt = (item: NotamItem) =>
+  asNonEmptyString(item.startsAt) ?? asNonEmptyString(item.effectiveStart)
+
+const resolveNotamEndsAt = (item: NotamItem) =>
+  asNonEmptyString(item.endsAt) ?? asNonEmptyString(item.effectiveEnd)
+
+const decodeMetarSummary = (metar: AviationMetar | null) => {
+  if (!metar) return null
+
+  const flightCategory = typeof metar.fltCat === "string" ? metar.fltCat : null
+  const windDir = typeof metar.wdir === "number" ? `${Math.round(metar.wdir)} deg` : "VRB"
+  const windSpeed = typeof metar.wspd === "number" ? `${Math.round(metar.wspd)} kt` : null
+  const gust = typeof metar.wgst === "number" ? ` gust ${Math.round(metar.wgst)} kt` : ""
+  const visibility =
+    typeof metar.visib === "string" || typeof metar.visib === "number"
+      ? `${metar.visib} SM`
+      : null
+  const temp = typeof metar.temp === "number" ? `${Math.round(metar.temp)}C` : null
+
+  const parts = [
+    flightCategory,
+    windSpeed ? `Wind ${windDir} ${windSpeed}${gust}` : null,
+    visibility ? `Vis ${visibility}` : null,
+    temp ? `Temp ${temp}` : null,
+  ].filter(Boolean)
+
+  return parts.length ? parts.join(" | ") : null
+}
+
+const buildMetarRows = (stations: AviationStation[], metars: AviationMetar[]): MetarListRow[] => {
+  const latestByIcao = new Map<string, AviationMetar>()
+
+  for (const metar of metars) {
+    const id = typeof metar.icaoId === "string" ? metar.icaoId.toUpperCase() : ""
+    if (!id) continue
+    const existing = latestByIcao.get(id)
+    const nextObs = typeof metar.obsTime === "number" ? metar.obsTime : -1
+    const currentObs = existing && typeof existing.obsTime === "number" ? existing.obsTime : -1
+    if (!existing || nextObs >= currentObs) {
+      latestByIcao.set(id, metar)
+    }
+  }
+
+  return stations.map((station) => ({
+    station,
+    metar: latestByIcao.get(station.id.toUpperCase()) ?? null,
+  }))
+}
+
+function TileRefreshButton({
+  onClick,
+  loading,
+  ariaLabel,
+}: {
+  onClick: () => void
+  loading: boolean
+  ariaLabel: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-200 transition hover:border-emerald-300/60 hover:text-white"
+      aria-label={ariaLabel}
+    >
+      {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCcw className="h-3.5 w-3.5" />}
+      Refresh
+    </button>
+  )
+}
+
+function TileErrorState({ message }: { message: string }) {
+  return (
+    <div className="rounded-xl border border-rose-500/30 bg-rose-500/10 p-3 text-sm text-rose-200">
+      {message}
+    </div>
+  )
+}
+
+export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
+  const isDev = import.meta.env.DEV
+  const [radiusMiles, setRadiusMiles] = useState<AviationRadiusMiles>(() => readStoredRadiusMiles())
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem(AVIATION_RADIUS_STORAGE_KEY, String(radiusMiles))
+  }, [radiusMiles])
+
+  const metars = useMetars({ lat, lon, radiusMiles, limit: 5 })
+  const tfrs = useTfrs({ lat, lon, radiusMiles })
+  const notams = useNotams({ lat, lon, radiusMiles })
+
+  const metarRows = useMemo(
+    () => buildMetarRows(metars.data?.stations ?? [], metars.data?.metars ?? []),
+    [metars.data]
+  )
+  const notamProviderError =
+    typeof notams.data?.error === "string" && notams.data.error.trim()
+      ? notams.data.error.trim()
+      : null
+  const notamItems = Array.isArray(notams.data?.items) ? notams.data.items : []
+
+  return (
+    <section className="rounded-3xl border border-slate-800/70 bg-slate-950/60 p-6">
+      <div className="mb-5">
+        <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Aviation</p>
+        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+          <h3 className="text-xl font-semibold text-white">Airspace + Surface Observations</h3>
+          <div className="flex flex-wrap items-center gap-2">
+            {AVIATION_RADIUS_OPTIONS.map((radius) => (
+              <button
+                key={radius}
+                type="button"
+                onClick={() => setRadiusMiles(radius)}
+                className={`rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] transition ${
+                  radiusMiles === radius
+                    ? "border-emerald-300/70 bg-emerald-400/15 text-emerald-100"
+                    : "border-slate-700 text-slate-300 hover:border-slate-500 hover:text-white"
+                }`}
+                aria-pressed={radiusMiles === radius}
+              >
+                {radius} mi
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        <AviationTile
+          label="Meteorological Aerodrome Reports"
+          title="METARs near you"
+          rightHeaderSlot={
+            <TileRefreshButton
+              onClick={metars.refresh}
+              loading={metars.isLoading || metars.isRefreshing}
+              ariaLabel="Refresh METARs"
+            />
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-slate-400">Within {radiusMiles} mi</p>
+
+            {metars.isLoading && metarRows.length === 0 ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading nearest METARs...
+              </div>
+            ) : metars.error ? (
+              <TileErrorState message={metars.error} />
+            ) : metarRows.length === 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-400">
+                No nearby METAR stations found.
+              </div>
+            ) : (
+              metarRows.map(({ station, metar }) => {
+                const summary = decodeMetarSummary(metar)
+                const rawMetar =
+                  metar && typeof metar.rawOb === "string" && metar.rawOb.trim()
+                    ? metar.rawOb
+                    : "No recent METAR in the last 2 hours."
+
+                return (
+                  <div
+                    key={station.id}
+                    className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-white">{station.id}</p>
+                        <p className="text-xs text-slate-400">
+                          {station.name ?? "Unknown station"}
+                          {typeof station.distanceMiles === "number"
+                            ? ` | ${station.distanceMiles.toFixed(1)} mi`
+                            : ""}
+                        </p>
+                      </div>
+                      {metar && typeof metar.fltCat === "string" ? (
+                        <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
+                          {metar.fltCat}
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-2 font-mono text-[11px] leading-relaxed text-slate-200">
+                      {rawMetar}
+                    </p>
+                    {summary ? <p className="mt-2 text-xs text-slate-300">{summary}</p> : null}
+                  </div>
+                )
+              })
+            )}
+            {metars.data?.message ? <p className="text-xs text-slate-400">{metars.data.message}</p> : null}
+          </div>
+        </AviationTile>
+
+        <AviationTile
+          label="Temporary Flight Restrictions"
+          title="TFRs near you"
+          rightHeaderSlot={
+            <TileRefreshButton
+              onClick={tfrs.refresh}
+              loading={tfrs.isLoading || tfrs.isRefreshing}
+              ariaLabel="Refresh TFRs"
+            />
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-slate-400">Within {radiusMiles} mi</p>
+
+            {tfrs.isLoading && !tfrs.data ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading nearby TFRs...
+              </div>
+            ) : tfrs.error ? (
+              <TileErrorState message={tfrs.error} />
+            ) : (tfrs.data?.items.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-400">
+                No TFRs found in the selected radius.
+              </div>
+            ) : (
+              (tfrs.data?.items ?? []).map((item) => (
+                <div
+                  key={item.notamId}
+                  className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-white">{item.notamId}</p>
+                      <p className="text-xs text-slate-400">
+                        {[item.type, item.facility, item.state].filter(Boolean).join(" | ") || "TFR"}
+                      </p>
+                    </div>
+                    {item.hasGeometry && item.bbox ? (
+                      <button
+                        type="button"
+                        onClick={() => onMapTfr?.(item)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-200 transition hover:border-emerald-200 hover:text-white"
+                      >
+                        <MapIcon className="h-3 w-3" />
+                        Map
+                      </button>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-xs text-slate-300">
+                    {formatTimeWindow(item.startsAt, item.endsAt)}
+                  </p>
+                  {item.description ? (
+                    <p className="mt-2 text-xs leading-relaxed text-slate-200">{item.description}</p>
+                  ) : null}
+                </div>
+              ))
+            )}
+            {isDev && tfrs.data?.message ? (
+              <p className="text-[11px] leading-relaxed text-slate-500">
+                Debug: {tfrs.data.message}
+              </p>
+            ) : null}
+          </div>
+        </AviationTile>
+
+        <AviationTile
+          label="Notice to Air Missions"
+          title="NOTAMs near you"
+          rightHeaderSlot={
+            <TileRefreshButton
+              onClick={notams.refresh}
+              loading={notams.isLoading || notams.isRefreshing}
+              ariaLabel="Refresh NOTAMs"
+            />
+          }
+        >
+          <div className="space-y-3">
+            <p className="text-xs text-slate-400">Within {radiusMiles} mi</p>
+
+            {notams.error ? (
+              <TileErrorState message={notams.error} />
+            ) : notams.isLoading && !notams.notConfigured && !notams.data ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading nearby NOTAMs...
+              </div>
+            ) : notamItems.length > 0 ? (
+              <div className="space-y-3">
+                {notamItems.map((item, index) => {
+                  const notamId = resolveNotamId(item, index)
+                  const type = resolveNotamType(item)
+                  const location = resolveNotamLocation(item)
+                  const description = resolveNotamDescription(item)
+                  const startsAt = resolveNotamStartsAt(item)
+                  const endsAt = resolveNotamEndsAt(item)
+                  const hasTimeWindow = Boolean(startsAt || endsAt)
+
+                  return (
+                    <div
+                      key={`${notamId}-${index}`}
+                      className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-white">{notamId}</p>
+                          <p className="text-xs text-slate-400">
+                            {[type, location].filter(Boolean).join(" | ") || "NOTAM"}
+                          </p>
+                        </div>
+                      </div>
+                      {hasTimeWindow ? (
+                        <p className="mt-2 text-xs text-slate-300">
+                          {formatTimeWindow(startsAt, endsAt)}
+                        </p>
+                      ) : null}
+                      {description ? (
+                        <p className="mt-2 text-xs leading-relaxed text-slate-200">{description}</p>
+                      ) : null}
+                    </div>
+                  )
+                })}
+                {notams.data?.message ? <p className="text-xs text-slate-400">{notams.data.message}</p> : null}
+              </div>
+            ) : !notams.notConfigured ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-400">
+                <p>No NOTAMs found in the selected radius.</p>
+                {notams.data?.message ? (
+                  <p className="mt-2 text-xs text-slate-500">{notams.data.message}</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-4">
+                <p className="text-sm font-semibold text-white">NOTAM feed not configured yet</p>
+                <p className="mt-2 text-xs leading-relaxed text-slate-400">
+                  Nearby NOTAM data is not enabled in this environment yet.
+                </p>
+                {notamProviderError ? (
+                  <p className="mt-2 text-xs text-slate-500">
+                    Provider response: {notamProviderError}
+                  </p>
+                ) : null}
+                <p className="mt-2 text-xs text-slate-500">
+                  Connect a NOTAM provider to enable nearby NOTAM results in this panel.
+                </p>
+                {isDev && notams.notConfigured && notams.nextSteps.length > 0 ? (
+                  <details className="mt-3 rounded-lg border border-slate-800/70 bg-slate-950/40 p-3">
+                    <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                      Provider setup notes
+                    </summary>
+                    <ul className="mt-2 space-y-1 text-xs text-slate-300">
+                      {notams.nextSteps.map((step) => (
+                        <li key={step}>- {step}</li>
+                      ))}
+                    </ul>
+                  </details>
+                ) : null}
+              </div>
+            )}
+          </div>
+        </AviationTile>
+      </div>
+    </section>
+  )
+}

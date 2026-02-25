@@ -1,19 +1,3 @@
-create table if not exists public.sites (
-  id uuid primary key default gen_random_uuid(),
-  user_id uuid not null references auth.users(id) on delete cascade,
-  name text not null,
-  lat double precision,
-  lng double precision,
-  region text,
-  notes text,
-  photo_url text,
-  custom_fields jsonb not null default '{}'::jsonb,
-  created_at timestamptz not null default now()
-);
-
-create index if not exists sites_user_id_idx on public.sites (user_id);
-create index if not exists sites_region_idx on public.sites (region);
-
 create table if not exists public.api_cache (
   cache_key text primary key,
   payload jsonb not null,
@@ -39,3 +23,4 @@ create table if not exists public.stations_index (
 create index if not exists stations_index_country_idx on public.stations_index (country);
 create index if not exists stations_index_updated_at_idx on public.stations_index (updated_at);
 create index if not exists stations_index_lat_lon_idx on public.stations_index (lat, lon);
+

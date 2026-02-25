@@ -15,6 +15,7 @@ import type { Session, User } from "@supabase/supabase-js"
 
 import { supabase } from "./lib/supabase"
 import { applyTheme, getStoredTheme, storeTheme, type ThemeMode } from "./lib/theme"
+import type { TfrMapFocus } from "./lib/aviation/types"
 
 import { AuthGuard } from "./components/AuthGuard"
 import { AuthSplash } from "./components/AuthSplash"
@@ -32,11 +33,15 @@ type TabKey = "conditions" | "radar" | "sites"
 type UnitType = "mph" | "kt"
 type TimeFormat = "12h" | "24h"
 
-type MapFocus = {
-  lat: number
-  lon: number
-  name?: string | null
-}
+type MapFocus =
+  | {
+      lat: number
+      lon: number
+      name?: string | null
+    }
+  | ({
+      name?: string | null
+    } & TfrMapFocus)
 
 const tabs: Array<{ key: TabKey; label: string; icon: JSX.Element }> = [
   { key: "conditions", label: "Conditions", icon: <ShieldCheck className="h-4 w-4" /> },
@@ -370,6 +375,13 @@ function AppShell() {
           useGps={useGps}
           timeFormat={timeFormat}
           onTabChange={setActiveTab}
+          onRadarFocus={(focus) => {
+            setMapFocus({
+              bounds: focus.bounds,
+              notamId: focus.notamId,
+              name: `TFR ${focus.notamId}`,
+            })
+          }}
         />
       )
     }

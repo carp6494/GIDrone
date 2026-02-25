@@ -3,3 +3,12 @@
 
 [functions.aviation-proxy]
 verify_jwt = false
+
+[functions.metar]
+verify_jwt = false
+
+[functions.tfr]
+verify_jwt = false
+
+[functions.notam]
+verify_jwt = false
