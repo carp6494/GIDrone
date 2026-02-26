@@ -70,14 +70,16 @@ const resolveNotamType = (item: NotamItem) =>
   asNonEmptyString(item.category) ??
   asNonEmptyString(item.subtype)
 
-const resolveNotamLocation = (item: NotamItem) =>
-  asNonEmptyString(item.location) ??
-  (() => {
-    const facilityLabel = [asNonEmptyString(item.facility), asNonEmptyString(item.state)]
-      .filter(Boolean)
-      .join(" | ")
-    return facilityLabel || null
-  })()
+const resolveNotamLocation = (item: NotamItem) => {
+  const directLocation = asNonEmptyString(item.location)
+  if (directLocation) return directLocation
+
+  const facilityLabel = [asNonEmptyString(item.facility), asNonEmptyString(item.state)]
+    .filter(Boolean)
+    .join(" | ")
+
+  return facilityLabel ? facilityLabel : null
+}
 
 const resolveNotamDescription = (item: NotamItem) =>
   asNonEmptyString(item.description) ??
