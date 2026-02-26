@@ -5,11 +5,13 @@ import {
   LogOut,
   Mail,
   Map,
+  Plane,
   Radar,
   RefreshCcw,
   Settings,
   ShieldCheck,
   User as UserIcon,
+  type LucideIcon,
 } from "lucide-react"
 import type { Session, User } from "@supabase/supabase-js"
 
@@ -19,9 +21,13 @@ import type { TfrMapFocus } from "./lib/aviation/types"
 
 import { AuthGuard } from "./components/AuthGuard"
 import { AuthSplash } from "./components/AuthSplash"
+import { TabBarSettings, type TabBarAlignment, type TabBarIcons, type TabBarSize, type TabBarSpacing } from "./components/TabBarSettings"
 import { ConditionsTab } from "./components/ConditionsTab"
 import { SettingsModal } from "./components/SettingsModal"
 
+const AviationTab = lazy(() =>
+  import("./components/AviationTab").then((module) => ({ default: module.AviationTab }))
+)
 const RadarTab = lazy(() =>
   import("./components/RadarTab").then((module) => ({ default: module.RadarTab }))
 )
@@ -29,7 +35,7 @@ const SitesTab = lazy(() =>
   import("./components/SitesTab").then((module) => ({ default: module.SitesTab }))
 )
 
-type TabKey = "conditions" | "radar" | "sites"
+type TabKey = "conditions" | "aviation" | "radar" | "sites"
 type UnitType = "mph" | "kt"
 type TimeFormat = "12h" | "24h"
 
@@ -43,11 +49,13 @@ type MapFocus =
       name?: string | null
     } & TfrMapFocus)
 
-const tabs: Array<{ key: TabKey; label: string; icon: JSX.Element }> = [
-  { key: "conditions", label: "Conditions", icon: <ShieldCheck className="h-4 w-4" /> },
-  { key: "radar", label: "Radar & Layers", icon: <Radar className="h-4 w-4" /> },
-  { key: "sites", label: "My Sites", icon: <Map className="h-4 w-4" /> },
+const tabs: Array<{ key: TabKey; label: string; icon: LucideIcon }> = [
+  { key: "conditions", label: "Conditions", icon: ShieldCheck },
+  { key: "aviation", label: "Aviation", icon: Plane },
+  { key: "radar", label: "Radar & Layers", icon: Radar },
+  { key: "sites", label: "My Sites", icon: Map },
 ]
+const DEFAULT_AVIATION_COORDS = { lat: 29.7604, lon: -95.3698 }
 
 class PanelErrorBoundary extends React.Component<
   { children: React.ReactNode },
@@ -105,6 +113,23 @@ function AppShell() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null)
+  const [aviationCoords, setAviationCoords] = useState(DEFAULT_AVIATION_COORDS)
+  const [tabBarAlignment, setTabBarAlignment] = useState<TabBarAlignment>(() => {
+    const stored = getStoredValue("tabBar.alignment", "center")
+    return stored === "left" ? "left" : "center"
+  })
+  const [tabBarSpacing, setTabBarSpacing] = useState<TabBarSpacing>(() => {
+    const stored = getStoredValue("tabBar.spacing", "even")
+    return stored === "compact" ? "compact" : "even"
+  })
+  const [tabBarSize, setTabBarSize] = useState<TabBarSize>(() => {
+    const stored = getStoredValue("tabBar.size", "normal")
+    return stored === "large" ? "large" : "normal"
+  })
+  const [tabBarIcons, setTabBarIcons] = useState<TabBarIcons>(() => {
+    const stored = getStoredValue("tabBar.icons", "off")
+    return stored === "on" ? "on" : "off"
+  })
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [user, setUser] = useState<User | null>(null)
@@ -365,6 +390,14 @@ function AppShell() {
     window.localStorage.setItem("gi-drone:timeFormat", timeFormat)
   }, [timeFormat])
 
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    window.localStorage.setItem("tabBar.alignment", tabBarAlignment)
+    window.localStorage.setItem("tabBar.spacing", tabBarSpacing)
+    window.localStorage.setItem("tabBar.size", tabBarSize)
+    window.localStorage.setItem("tabBar.icons", tabBarIcons)
+  }, [tabBarAlignment, tabBarSpacing, tabBarSize, tabBarIcons])
+
   const effectiveUserId = user?.id ?? null
 
   const panel = useMemo(() => {
@@ -375,12 +408,23 @@ function AppShell() {
           useGps={useGps}
           timeFormat={timeFormat}
           onTabChange={setActiveTab}
-          onRadarFocus={(focus) => {
+          onActiveCoordsChange={setAviationCoords}
+        />
+      )
+    }
+    if (activeTab === "aviation") {
+      return (
+        <AviationTab
+          lat={aviationCoords.lat}
+          lon={aviationCoords.lon}
+          onMapTfr={(item) => {
+            if (!item.bbox) return
             setMapFocus({
-              bounds: focus.bounds,
-              notamId: focus.notamId,
-              name: `TFR ${focus.notamId}`,
+              bounds: item.bbox,
+              notamId: item.notamId,
+              name: `TFR ${item.notamId}`,
             })
+            setActiveTab("radar")
           }}
         />
       )
@@ -460,7 +504,30 @@ function AppShell() {
         />
       </AuthGuard>
     )
-  }, [activeTab, unit, useGps, timeFormat, user, effectiveUserId, mapFocus, loading, authError, email])
+  }, [
+    activeTab,
+    unit,
+    useGps,
+    timeFormat,
+    user,
+    effectiveUserId,
+    mapFocus,
+    loading,
+    authError,
+    email,
+    aviationCoords,
+  ])
+
+  const showTabIcons = tabBarIcons === "on"
+  const tabRowAlignmentClass = tabBarAlignment === "left" ? "justify-start" : "justify-center"
+  const tabListLayoutClass =
+    tabBarSpacing === "even"
+      ? "grid w-full grid-cols-2 gap-2 md:grid-cols-4 md:rounded-full"
+      : "grid w-full grid-cols-2 gap-1.5 md:flex md:w-auto md:flex-nowrap md:gap-1.5 md:rounded-full"
+  const tabButtonWidthClass = tabBarSpacing === "even" ? "w-full" : "w-full md:w-auto"
+  const tabButtonSizeClass =
+    tabBarSize === "large" ? "px-4 py-3 text-sm" : "px-3 py-2 text-xs"
+  const tabIconSizeClass = tabBarSize === "large" ? "h-5 w-5" : "h-4 w-4"
 
   if (loading) {
     return (
@@ -626,23 +693,46 @@ function AppShell() {
               </p>
             </div>
 
-            <div className="flex w-full flex-col items-center">
-              <div className="mx-auto grid w-full max-w-xl grid-cols-3 gap-2 rounded-full border border-slate-200 bg-slate-50/90 p-1 text-xs uppercase tracking-[0.2em] text-slate-500 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-400">
-                {tabs.map((tab) => (
-                  <button
-                    key={tab.key}
-                    type="button"
-                    onClick={() => setActiveTab(tab.key)}
-                    className={`flex w-full items-center justify-center gap-2 rounded-full px-3 py-2 transition ${
-                      activeTab === tab.key
-                        ? "bg-emerald-400 text-slate-950"
-                        : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
-                    }`}
+            <div className="flex w-full min-w-0 flex-col gap-2">
+              <div className="mx-auto w-full max-w-4xl">
+                <div className={`flex w-full ${tabRowAlignmentClass}`}>
+                  <div
+                    className={`min-w-0 rounded-2xl border border-slate-200 bg-slate-50/90 p-1 uppercase tracking-[0.2em] text-slate-500 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-400 ${tabListLayoutClass}`}
                   >
-                    {tab.icon}
-                    {tab.label}
-                  </button>
-                ))}
+                    {tabs.map((tab) => {
+                      const Icon = tab.icon
+                      return (
+                        <button
+                          key={tab.key}
+                          type="button"
+                          onClick={() => setActiveTab(tab.key)}
+                          className={`flex min-w-0 items-center justify-center ${
+                            showTabIcons ? "gap-2" : "gap-0"
+                          } rounded-xl text-center font-medium transition sm:rounded-full ${tabButtonWidthClass} ${tabButtonSizeClass} ${
+                            activeTab === tab.key
+                              ? "bg-emerald-400 text-slate-950"
+                              : "text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white"
+                          }`}
+                        >
+                          {showTabIcons ? <Icon className={tabIconSizeClass} /> : null}
+                          <span className="truncate">{tab.label}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              </div>
+              <div className="mx-auto flex w-full max-w-4xl justify-end">
+                <TabBarSettings
+                  alignment={tabBarAlignment}
+                  onAlignmentChange={setTabBarAlignment}
+                  spacing={tabBarSpacing}
+                  onSpacingChange={setTabBarSpacing}
+                  size={tabBarSize}
+                  onSizeChange={setTabBarSize}
+                  icons={tabBarIcons}
+                  onIconsChange={setTabBarIcons}
+                />
               </div>
             </div>
 

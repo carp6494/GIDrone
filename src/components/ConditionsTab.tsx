@@ -37,8 +37,6 @@ import {
   getLastWeatherFetchTimestamp,
   getKPIndex,
 } from "../services/weatherService"
-import { AviationPanel } from "./AviationPanel"
-import type { TfrMapFocus } from "../lib/aviation/types"
 import { formatLocalHour, formatLocalTime, type TimeFormat } from "../utils/timeFormat"
 import {
   calculateFlyability,
@@ -56,8 +54,8 @@ type ConditionsTabProps = {
   unit: UnitType
   useGps: boolean
   timeFormat: TimeFormat
-  onTabChange: (tab: "conditions" | "radar" | "sites") => void
-  onRadarFocus?: (focus: TfrMapFocus) => void
+  onTabChange: (tab: "conditions" | "aviation" | "radar" | "sites") => void
+  onActiveCoordsChange?: (coords: { lat: number; lon: number }) => void
 }
 
 type LocationSelection = {
@@ -2180,7 +2178,7 @@ export function ConditionsTab({
   useGps,
   timeFormat,
   onTabChange,
-  onRadarFocus,
+  onActiveCoordsChange,
 }: ConditionsTabProps) {
   const [coords, setCoords] = useState(DEFAULT_COORDS)
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null)
@@ -2223,6 +2221,11 @@ export function ConditionsTab({
       ? coords
       : DEFAULT_COORDS
   const activeGpsAccuracy = searchSelection || !useGps ? null : gpsAccuracy
+
+  useEffect(() => {
+    onActiveCoordsChange?.(activeCoords)
+  }, [activeCoords.lat, activeCoords.lon, onActiveCoordsChange])
+
   const lastUpdatedAt = getLastWeatherFetchTimestamp()
   const hasLastUpdated = typeof lastUpdatedAt === "number"
   const lastUpdatedLabel = lastUpdatedAt
@@ -3348,18 +3351,6 @@ export function ConditionsTab({
           </div>
         </header>
 
-        <AviationPanel
-          lat={activeCoords.lat}
-          lon={activeCoords.lon}
-          onMapTfr={(item) => {
-            if (!item.bbox) return
-            onTabChange("radar")
-            onRadarFocus?.({
-              bounds: item.bbox,
-              notamId: item.notamId,
-            })
-          }}
-        />
 
         {weather && (
           <ForecastSection
