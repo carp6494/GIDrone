@@ -445,18 +445,18 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
 
   return (
     <section className="space-y-6">
-      <header className="flex flex-col gap-4 rounded-3xl border border-slate-800/70 bg-slate-900/60 p-6 md:flex-row md:items-center md:justify-between">
-        <div className="space-y-2">
+      <header className="flex flex-col gap-4 rounded-3xl border border-slate-800/70 bg-slate-900/60 p-4 sm:p-6 md:flex-row md:items-center md:justify-between">
+        <div className="min-w-0 space-y-2">
           <p className="text-xs uppercase tracking-[0.4em] text-emerald-300">Radar & Layers</p>
-          <h2 className="text-3xl font-semibold text-white md:text-4xl">
+          <h2 className="text-[clamp(1.6rem,4vw,2.25rem)] font-semibold text-white">
             Mission Airspace Overview
           </h2>
-          <p className="text-sm text-slate-300">
+          <p className="break-words text-sm text-slate-300">
             Blend live precipitation sweeps, active TFR polygons, and your launch sites in one
             operational view.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-2 text-xs uppercase tracking-[0.2em] text-slate-400">
+        <div className="flex w-full flex-wrap items-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 p-2 text-xs uppercase tracking-[0.2em] text-slate-400 md:w-auto">
           {baseStyleOptions.map((style) => (
             <button
               key={style.key}
@@ -475,11 +475,14 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       </header>
 
       <div className="relative overflow-hidden rounded-3xl border border-slate-800 bg-slate-900/40">
-        <div ref={mapContainerRef} className="h-[60vh] w-full sm:h-[65vh] lg:h-[70vh]" />
+        <div
+          ref={mapContainerRef}
+          className="h-[52svh] min-h-[320px] w-full sm:h-[60svh] lg:h-[70svh]"
+        />
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
 
-        <div className="absolute inset-x-4 bottom-4 rounded-3xl border border-slate-800/70 bg-slate-950/80 p-4 backdrop-blur">
+        <div className="absolute inset-x-2 bottom-2 max-h-[45svh] overflow-y-auto rounded-2xl border border-slate-800/70 bg-slate-950/80 p-3 backdrop-blur sm:inset-x-4 sm:bottom-4 sm:max-h-[40svh] sm:rounded-3xl sm:p-4">
           <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
             <span className="flex items-center gap-2">
               <Layers className="h-4 w-4" />
@@ -523,7 +526,7 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
             </button>
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-slate-300">
+          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3 text-xs text-slate-300">
             <div className="flex items-center gap-2 rounded-full border border-slate-800/70 bg-slate-900/60 px-3 py-1">
               <Satellite className="h-4 w-4 text-slate-400" />
               <span>Geolocate + Zoom controls active</span>
@@ -540,7 +543,7 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
               </span>
             )}
             {tfrs.error ? (
-              <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
+              <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
                 {tfrs.error}
               </span>
             ) : null}

@@ -32,26 +32,26 @@ export function SettingsModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-6 dark:bg-slate-950/75"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/55 p-4 sm:items-center sm:p-6 dark:bg-slate-950/75"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-xl rounded-3xl border border-slate-200 bg-white/95 p-6 text-left text-slate-900 shadow-2xl shadow-slate-900/10 backdrop-blur dark:border-slate-800 dark:bg-slate-950/95 dark:text-slate-100 dark:shadow-slate-950/40"
+        className="my-auto w-full max-w-xl overflow-y-auto rounded-3xl border border-slate-200 bg-white/95 p-4 text-left text-slate-900 shadow-2xl shadow-slate-900/10 backdrop-blur sm:max-h-[calc(100svh-3rem)] sm:p-6 dark:border-slate-800 dark:bg-slate-950/95 dark:text-slate-100 dark:shadow-slate-950/40"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-4">
-          <div>
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
             <p className="text-xs uppercase tracking-[0.4em] text-emerald-300">
               Settings
             </p>
-            <h2 className="mt-2 text-2xl font-semibold text-slate-900 dark:text-white">
+            <h2 className="mt-2 text-[clamp(1.35rem,3.2vw,1.5rem)] font-semibold text-slate-900 dark:text-white">
               Mission Preferences
             </h2>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs uppercase tracking-[0.2em] text-slate-600 transition hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:text-white"
+            className="shrink-0 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs uppercase tracking-[0.2em] text-slate-600 transition hover:text-slate-900 dark:border-slate-800 dark:bg-slate-900/70 dark:text-slate-300 dark:hover:text-white"
           >
             Close
           </button>

@@ -290,21 +290,21 @@ export function SiteDetail({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 px-4 py-6 md:items-stretch md:justify-end md:px-0">
-      <div className="flex max-h-[90vh] w-full flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl md:h-full md:max-h-none md:max-w-3xl md:rounded-none md:rounded-l-3xl">
-        <header className="flex items-start justify-between gap-4 border-b border-slate-800 bg-slate-950/60 px-6 py-5">
-          <div>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-950/80 px-4 py-4 md:items-stretch md:justify-end md:px-0 md:py-0">
+      <div className="flex max-h-[95svh] w-full flex-col overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl md:h-full md:max-h-none md:max-w-3xl md:rounded-none md:rounded-l-3xl">
+        <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 bg-slate-950/60 px-4 py-4 sm:px-6 sm:py-5">
+          <div className="min-w-0">
             <p className="text-xs uppercase tracking-[0.35em] text-emerald-300">
               Site Detail
             </p>
-            <h3 className="mt-2 text-2xl font-semibold text-white">
+            <h3 className="mt-2 break-words text-[clamp(1.25rem,3vw,1.5rem)] font-semibold text-white">
               {currentSite.site_name ?? "Untitled Site"}
             </h3>
             <p className="mt-1 text-xs text-slate-400">
               {currentSite.site_number ? `#${currentSite.site_number}` : "No ID"}
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <button
               type="button"
               onClick={handleExport}
@@ -342,11 +342,11 @@ export function SiteDetail({
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-6 py-6">
-          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-            <section className="space-y-6">
+        <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+          <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+            <section className="min-w-0 space-y-6">
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <h4 className="text-sm font-semibold text-slate-200">
                     Core Metadata
                   </h4>
@@ -461,7 +461,7 @@ export function SiteDetail({
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <h4 className="text-sm font-semibold text-slate-200">
                     Custom Fields
                   </h4>
@@ -479,7 +479,7 @@ export function SiteDetail({
                     customFields.map((field, index) => (
                       <div
                         key={`${field.key}-${index}`}
-                        className="grid gap-2 md:grid-cols-[1fr_1fr_auto]"
+                        className="grid gap-2 lg:grid-cols-[1fr_1fr_auto]"
                       >
                         <input
                           value={field.key}
@@ -523,7 +523,7 @@ export function SiteDetail({
               </div>
             </section>
 
-            <section className="space-y-6">
+            <section className="min-w-0 space-y-6">
               <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                 <h4 className="text-sm font-semibold text-slate-200">
                   Winner Photo
@@ -540,8 +540,8 @@ export function SiteDetail({
                       No winner photo uploaded.
                     </div>
                   )}
-                  <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-slate-700 px-4 py-3 text-xs text-slate-300 transition hover:border-emerald-400">
-                    <span className="inline-flex items-center gap-2">
+                  <label className="flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-700 px-4 py-3 text-xs text-slate-300 transition hover:border-emerald-400">
+                    <span className="inline-flex min-w-0 items-center gap-2 break-words">
                       <Camera className="h-4 w-4 text-emerald-300" />
                       {uploading ? "Uploading..." : "Upload winner photo"}
                     </span>
@@ -572,8 +572,8 @@ export function SiteDetail({
                       key={key}
                       className="flex items-start justify-between gap-4"
                     >
-                      <span className="text-slate-500">{key}</span>
-                      <span className="text-slate-200">
+                      <span className="min-w-0 break-words text-slate-500">{key}</span>
+                      <span className="min-w-0 break-words text-right text-slate-200">
                         {value == null || value === "" ? "-" : String(value)}
                       </span>
                     </div>

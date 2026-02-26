@@ -55,19 +55,19 @@ export function SiteList({
         ) : sites.length ? (
           <div className="divide-y divide-slate-800">
             {sites.map((site) => (
-              <div
-                key={site.id}
-                className="group grid gap-4 px-4 py-4 text-xs text-slate-300 transition hover:bg-slate-900/40 md:grid-cols-[1.2fr_0.8fr_auto] md:items-center"
-              >
-                <button
-                  type="button"
-                  onClick={() => onSelect(site)}
-                  className="flex flex-col gap-2 text-left"
+                <div
+                  key={site.id}
+                  className="group grid gap-4 px-4 py-4 text-xs text-slate-300 transition hover:bg-slate-900/40 xl:grid-cols-[1.2fr_0.8fr_auto] xl:items-center"
                 >
-                  <div className="flex flex-wrap items-center gap-3">
-                    <span className="text-sm font-semibold text-slate-100">
-                      {site.site_name ?? "Untitled"}
-                    </span>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(site)}
+                    className="flex min-w-0 flex-col gap-2 text-left"
+                  >
+                    <div className="flex flex-wrap items-center gap-3">
+                      <span className="min-w-0 break-words text-sm font-semibold text-slate-100">
+                        {site.site_name ?? "Untitled"}
+                      </span>
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] uppercase tracking-[0.2em] text-slate-400">
                       {site.site_number ?? "No ID"}
                     </span>
@@ -78,7 +78,7 @@ export function SiteList({
                     <span>{site.structure_type ?? "Unknown structure"}</span>
                   </div>
                 </button>
-                <div className="flex flex-wrap gap-2 text-[11px] text-slate-400">
+                  <div className="flex min-w-0 flex-wrap gap-2 text-[11px] text-slate-400">
                   <span className="rounded-full border border-slate-800 px-2 py-1">
                     {site.structure_type ?? "Unclassified"}
                   </span>
@@ -86,11 +86,11 @@ export function SiteList({
                     {getRegionValue(site) || "No region"}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => onSelect(site)}
-                  className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200"
-                >
+                  <button
+                    type="button"
+                    onClick={() => onSelect(site)}
+                    className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-700 px-3 py-1 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200 xl:w-auto"
+                  >
                   <MapPin className="h-3.5 w-3.5" />
                   View details
                 </button>

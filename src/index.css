@@ -6,4 +6,40 @@
 
 :root {
   font-family: "Space Grotesk", "Segoe UI", sans-serif;
+  font-size: clamp(15px, 0.18vw + 14.4px, 16px);
+}
+
+html,
+body,
+#root {
+  min-width: 320px;
+  width: 100%;
+}
+
+body {
+  overflow-x: clip;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+}
+
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .fixed.inset-0.z-40,
+  .fixed.inset-0.z-50,
+  .fixed.inset-0.z-\[60\] {
+    align-items: flex-start;
+    overflow-y: auto;
+    padding-block: 1rem;
+  }
 }

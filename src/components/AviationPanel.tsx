@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react"
-import { Loader2, Map as MapIcon, RefreshCcw } from "lucide-react"
+import { Languages, Loader2, Map as MapIcon, RefreshCcw } from "lucide-react"
 
 import { useMetars } from "../hooks/useMetars"
 import { useNotams } from "../hooks/useNotams"
@@ -90,27 +90,53 @@ const resolveNotamStartsAt = (item: NotamItem) =>
 const resolveNotamEndsAt = (item: NotamItem) =>
   asNonEmptyString(item.endsAt) ?? asNonEmptyString(item.effectiveEnd)
 
-const decodeMetarSummary = (metar: AviationMetar | null) => {
+const getFlightCategoryLabel = (value: unknown) => {
+  if (typeof value !== "string") return null
+  const normalized = value.trim().toUpperCase()
+  if (!normalized) return null
+
+  const labels: Record<string, string> = {
+    VFR: "Visual flight rules",
+    MVFR: "Marginal visual flight rules",
+    IFR: "Instrument flight rules",
+    LIFR: "Low instrument flight rules",
+  }
+
+  return labels[normalized] ? `${normalized} (${labels[normalized]})` : normalized
+}
+
+const translateMetarToPlainEnglish = (metar: AviationMetar | null) => {
   if (!metar) return null
 
-  const flightCategory = typeof metar.fltCat === "string" ? metar.fltCat : null
-  const windDir = typeof metar.wdir === "number" ? `${Math.round(metar.wdir)} deg` : "VRB"
-  const windSpeed = typeof metar.wspd === "number" ? `${Math.round(metar.wspd)} kt` : null
-  const gust = typeof metar.wgst === "number" ? ` gust ${Math.round(metar.wgst)} kt` : ""
+  const flightCategory = getFlightCategoryLabel(metar.fltCat)
+  const windDirText = typeof metar.wdir === "number" ? `${Math.round(metar.wdir)} degrees` : null
+  const windSpeed = typeof metar.wspd === "number" ? `${Math.round(metar.wspd)} knots` : null
+  const gust = typeof metar.wgst === "number" ? `${Math.round(metar.wgst)} knots` : null
   const visibility =
     typeof metar.visib === "string" || typeof metar.visib === "number"
-      ? `${metar.visib} SM`
+      ? `${metar.visib} statute mile${String(metar.visib) === "1" ? "" : "s"}`
       : null
   const temp = typeof metar.temp === "number" ? `${Math.round(metar.temp)}C` : null
+  const dewpoint = typeof metar.dewp === "number" ? `${Math.round(metar.dewp)}C` : null
 
   const parts = [
-    flightCategory,
-    windSpeed ? `Wind ${windDir} ${windSpeed}${gust}` : null,
-    visibility ? `Vis ${visibility}` : null,
-    temp ? `Temp ${temp}` : null,
+    flightCategory ? `Flight category is ${flightCategory}` : null,
+    windSpeed
+      ? `Wind is ${windDirText ? `from ${windDirText} ` : "variable at "}${windSpeed}${
+          gust ? `, gusting ${gust}` : ""
+        }`
+      : null,
+    visibility ? `Visibility is ${visibility}` : null,
+    temp && dewpoint
+      ? `Temperature is ${temp} with a dew point of ${dewpoint}`
+      : temp
+        ? `Temperature is ${temp}`
+        : dewpoint
+          ? `Dew point is ${dewpoint}`
+          : null,
   ].filter(Boolean)
 
-  return parts.length ? parts.join(" | ") : null
+  return parts.length ? `${parts.join(". ")}.` : null
 }
 
 const buildMetarRows = (stations: AviationStation[], metars: AviationMetar[]): MetarListRow[] => {
@@ -166,6 +192,7 @@ function TileErrorState({ message }: { message: string }) {
 export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
   const isDev = import.meta.env.DEV
   const [radiusMiles, setRadiusMiles] = useState<AviationRadiusMiles>(() => readStoredRadiusMiles())
+  const [translatedMetars, setTranslatedMetars] = useState<Record<string, boolean>>({})
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -190,9 +217,11 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
     <section className="rounded-3xl border border-slate-800/70 bg-slate-950/60 p-6">
       <div className="mb-5">
         <p className="text-xs uppercase tracking-[0.4em] text-slate-500">Aviation</p>
-        <div className="mt-2 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
-          <h3 className="text-xl font-semibold text-white">Airspace + Surface Observations</h3>
-          <div className="flex flex-wrap items-center gap-2">
+        <div className="mt-2 flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:gap-4">
+          <h3 className="min-w-0 text-[clamp(1.2rem,2vw,1.25rem)] font-semibold text-white">
+            Airspace + Surface Observations
+          </h3>
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
             {AVIATION_RADIUS_OPTIONS.map((radius) => (
               <button
                 key={radius}
@@ -212,7 +241,7 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <AviationTile
           label="Meteorological Aerodrome Reports"
           title="METARs near you"
@@ -240,11 +269,14 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
               </div>
             ) : (
               metarRows.map(({ station, metar }) => {
-                const summary = decodeMetarSummary(metar)
+                const translatedSummary = translateMetarToPlainEnglish(metar)
                 const rawMetar =
                   metar && typeof metar.rawOb === "string" && metar.rawOb.trim()
                     ? metar.rawOb
                     : "No recent METAR in the last 2 hours."
+                const hasRecentMetar = rawMetar !== "No recent METAR in the last 2 hours."
+                const translateKey = `${station.id}:${rawMetar}`
+                const isTranslated = Boolean(translatedMetars[translateKey])
 
                 return (
                   <div
@@ -252,25 +284,41 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                     className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
                   >
                     <div className="flex items-start justify-between gap-3">
-                      <div>
+                      <div className="min-w-0">
                         <p className="text-sm font-semibold text-white">{station.id}</p>
-                        <p className="text-xs text-slate-400">
+                        <p className="break-words text-xs text-slate-400">
                           {station.name ?? "Unknown station"}
                           {typeof station.distanceMiles === "number"
                             ? ` | ${station.distanceMiles.toFixed(1)} mi`
                             : ""}
                         </p>
                       </div>
-                      {metar && typeof metar.fltCat === "string" ? (
-                        <span className="rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200">
-                          {metar.fltCat}
-                        </span>
+                      {hasRecentMetar ? (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setTranslatedMetars((current) => ({
+                              ...current,
+                              [translateKey]: !current[translateKey],
+                            }))
+                          }
+                          className="inline-flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-200 transition hover:border-emerald-300/70 hover:bg-emerald-400/15 hover:text-white"
+                          aria-pressed={isTranslated}
+                          aria-label={`${isTranslated ? "Hide" : "Translate"} METAR for ${station.id}`}
+                        >
+                          <Languages className="h-3 w-3" />
+                          {isTranslated ? "Hide" : "Translate"}
+                        </button>
                       ) : null}
                     </div>
                     <p className="mt-2 font-mono text-[11px] leading-relaxed text-slate-200">
                       {rawMetar}
                     </p>
-                    {summary ? <p className="mt-2 text-xs text-slate-300">{summary}</p> : null}
+                    {isTranslated ? (
+                      <div className="mt-2 rounded-lg border border-emerald-400/25 bg-emerald-400/5 p-2 text-xs leading-relaxed text-emerald-100 break-words">
+                        {translatedSummary ?? "Plain-English translation is not available for this METAR yet."}
+                      </div>
+                    ) : null}
                   </div>
                 )
               })
@@ -311,9 +359,9 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                   className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div>
+                    <div className="min-w-0">
                       <p className="text-sm font-semibold text-white">{item.notamId}</p>
-                      <p className="text-xs text-slate-400">
+                      <p className="break-words text-xs text-slate-400">
                         {[item.type, item.facility, item.state].filter(Boolean).join(" | ") || "TFR"}
                       </p>
                     </div>
@@ -332,13 +380,15 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                     {formatTimeWindow(item.startsAt, item.endsAt)}
                   </p>
                   {item.description ? (
-                    <p className="mt-2 text-xs leading-relaxed text-slate-200">{item.description}</p>
+                    <p className="mt-2 break-words text-xs leading-relaxed text-slate-200">
+                      {item.description}
+                    </p>
                   ) : null}
                 </div>
               ))
             )}
             {isDev && tfrs.data?.message ? (
-              <p className="text-[11px] leading-relaxed text-slate-500">
+              <p className="break-words text-[11px] leading-relaxed text-slate-500">
                 Debug: {tfrs.data.message}
               </p>
             ) : null}
@@ -383,9 +433,9 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                       className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
                     >
                       <div className="flex items-start justify-between gap-3">
-                        <div>
+                        <div className="min-w-0">
                           <p className="text-sm font-semibold text-white">{notamId}</p>
-                          <p className="text-xs text-slate-400">
+                          <p className="break-words text-xs text-slate-400">
                             {[type, location].filter(Boolean).join(" | ") || "NOTAM"}
                           </p>
                         </div>
@@ -396,7 +446,9 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                         </p>
                       ) : null}
                       {description ? (
-                        <p className="mt-2 text-xs leading-relaxed text-slate-200">{description}</p>
+                        <p className="mt-2 break-words text-xs leading-relaxed text-slate-200">
+                          {description}
+                        </p>
                       ) : null}
                     </div>
                   )

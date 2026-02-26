@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2"
+import { DOMParser as XmlDomParser } from "npm:@xmldom/xmldom@0.8.10"
 
 import {
   clamp,
@@ -69,6 +70,8 @@ type TfrResponse = {
   message?: string
 }
 
+type TfrFailureKind = "timeout" | "fetch" | "parse" | "other"
+
 type FaaTfrListRow = {
   notam_id?: unknown
   type?: unknown
@@ -87,8 +90,63 @@ type XmlNode = Document | Element
 
 const toNumber = (value: string | null | undefined) => {
   if (!value) return null
-  const parsed = Number(value)
+  const parsed = Number(value.trim())
   return Number.isFinite(parsed) ? parsed : null
+}
+
+const toGeoCoordinate = (
+  value: string | null | undefined,
+  axis: "lat" | "lon"
+) => {
+  if (!value) return null
+  const trimmed = value.trim().toUpperCase()
+  const direct = Number(trimmed)
+  if (Number.isFinite(direct)) return direct
+
+  const decimalHemisphereMatch = trimmed.match(/^([+-]?\d+(?:\.\d+)?)([NSEW])$/)
+  if (decimalHemisphereMatch) {
+    const magnitude = Number(decimalHemisphereMatch[1])
+    if (!Number.isFinite(magnitude)) return null
+    const hemisphere = decimalHemisphereMatch[2]
+    const signed =
+      hemisphere === "S" || hemisphere === "W" ? -Math.abs(magnitude) : Math.abs(magnitude)
+    if (axis === "lat" && signed >= -90 && signed <= 90) return signed
+    if (axis === "lon" && signed >= -180 && signed <= 180) return signed
+    return null
+  }
+
+  // FAA sometimes encodes coords as DDMMSS[N|S] / DDDMMSS[E|W].
+  const dmsMatch = trimmed.match(/^(\d{6,7})(?:\.(\d+))?([NSEW])$/)
+  if (!dmsMatch) return null
+
+  const digits = dmsMatch[1]
+  const fractional = dmsMatch[2] ? Number(`0.${dmsMatch[2]}`) : 0
+  const hemisphere = dmsMatch[3]
+
+  const degreeDigits = axis === "lat" ? 2 : 3
+  if (digits.length < degreeDigits + 4) return null
+
+  const degrees = Number(digits.slice(0, degreeDigits))
+  const minutes = Number(digits.slice(degreeDigits, degreeDigits + 2))
+  const seconds = Number(digits.slice(degreeDigits + 2)) + fractional
+  if (
+    !Number.isFinite(degrees) ||
+    !Number.isFinite(minutes) ||
+    !Number.isFinite(seconds) ||
+    minutes < 0 ||
+    minutes >= 60 ||
+    seconds < 0 ||
+    seconds >= 60
+  ) {
+    return null
+  }
+
+  const magnitude = degrees + minutes / 60 + seconds / 3600
+  const signed =
+    hemisphere === "S" || hemisphere === "W" ? -Math.abs(magnitude) : Math.abs(magnitude)
+  if (axis === "lat" && signed >= -90 && signed <= 90) return signed
+  if (axis === "lon" && signed >= -180 && signed <= 180) return signed
+  return null
 }
 
 const uniqueBy = <T,>(items: T[], getKey: (item: T) => string) => {
@@ -103,6 +161,18 @@ const uniqueBy = <T,>(items: T[], getKey: (item: T) => string) => {
   return result
 }
 
+const escapeBareXmlAmpersands = (xmlText: string) =>
+  xmlText.replace(/&(?!(?:amp|lt|gt|quot|apos|#\d+|#x[0-9a-fA-F]+);)/g, "&amp;")
+
+const stripInvalidXmlControlChars = (xmlText: string) =>
+  xmlText.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+
+const stripVerboseDescriptionFields = (xmlText: string) =>
+  xmlText.replace(
+    /<(txtDescrModern|txtDescrTraditional|txtDescrUSNS)>[\s\S]*?<\/\1>/g,
+    "<$1></$1>"
+  )
+
 const getSourceUrls = (notamId: string): TfrSourceUrls => {
   const normalized = normalizeNotamId(notamId)
   const xmlFileId = normalized.replace(/\//g, "_")
@@ -115,15 +185,28 @@ const getSourceUrls = (notamId: string): TfrSourceUrls => {
   }
 }
 
+const elementNameMatches = (element: Element, localName: string) => {
+  const target = localName.toLowerCase()
+  const elementLocal = (element.localName ?? "").toLowerCase()
+  const elementNode = (element.nodeName ?? "").toLowerCase()
+  return elementLocal === target || elementNode === target
+}
+
 const elementsByLocalName = (root: XmlNode, localName: string): Element[] => {
-  const all = (root as Document | Element).getElementsByTagName("*")
+  const baseElement =
+    "documentElement" in root ? (root.documentElement as Element | null) : (root as Element)
+  if (!baseElement) return []
+
   const matches: Element[] = []
+  if (elementNameMatches(baseElement, localName)) {
+    matches.push(baseElement)
+  }
+
+  const all = baseElement.getElementsByTagName("*")
   for (let index = 0; index < all.length; index += 1) {
     const element = all.item(index)
     if (!element) continue
-    if (element.localName === localName || element.nodeName === localName) {
-      matches.push(element)
-    }
+    if (elementNameMatches(element, localName)) matches.push(element)
   }
   return matches
 }
@@ -135,13 +218,57 @@ const firstLocalText = (root: XmlNode, localName: string) => {
 }
 
 const parseXml = (xmlText: string) => {
-  const document = new DOMParser().parseFromString(xmlText, "application/xml")
-  if (!document) throw new Error("Failed to parse FAA TFR XML.")
-  const parserErrors = elementsByLocalName(document, "parsererror")
-  if (parserErrors.length > 0) {
-    throw new Error("FAA TFR XML parsererror")
+  const parseOrThrow = (
+    input: string,
+    mimeType: "text/xml" | "application/xml" | "text/html"
+  ) => {
+    const document = new XmlDomParser().parseFromString(input, mimeType) as unknown as Document
+    if (!document) throw new Error("Failed to parse FAA TFR XML.")
+    if (mimeType !== "text/html") {
+      const parserErrors = elementsByLocalName(document, "parsererror")
+      if (parserErrors.length > 0) {
+        throw new Error(`FAA TFR XML parsererror (${mimeType})`)
+      }
+    }
+    if (
+      elementsByLocalName(document, "TFRAreaGroup").length === 0 &&
+      elementsByLocalName(document, "TfrNot").length === 0
+    ) {
+      throw new Error(`FAA TFR XML parse missing expected nodes (${mimeType})`)
+    }
+    return document
   }
-  return document
+
+  const candidates = uniqueBy(
+    [
+      xmlText,
+      stripInvalidXmlControlChars(xmlText),
+      escapeBareXmlAmpersands(stripInvalidXmlControlChars(xmlText)),
+      stripVerboseDescriptionFields(
+        escapeBareXmlAmpersands(stripInvalidXmlControlChars(xmlText))
+      ),
+    ].filter((value) => value.trim().length > 0),
+    (value) => value
+  )
+
+  const mimeTypes: Array<"text/xml" | "application/xml" | "text/html"> = [
+    "text/xml",
+    "application/xml",
+    "text/html",
+  ]
+  let lastError: unknown = null
+
+  for (const candidate of candidates) {
+    for (const mimeType of mimeTypes) {
+      try {
+        return parseOrThrow(candidate, mimeType)
+      } catch (error) {
+        lastError = error
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Failed to parse FAA TFR XML.")
 }
 
 const closeRing = (ring: number[][]) => {
@@ -257,6 +384,12 @@ const mergeBboxes = (boxes: Array<BoundsTuple | null>): BoundsTuple | null => {
 const bboxContainsPoint = (bbox: BoundsTuple, lat: number, lon: number) =>
   lon >= bbox[0] && lon <= bbox[2] && lat >= bbox[1] && lat <= bbox[3]
 
+const minDistanceToBboxMiles = (bbox: BoundsTuple, lat: number, lon: number) => {
+  const clampedLon = Math.min(Math.max(lon, bbox[0]), bbox[2])
+  const clampedLat = Math.min(Math.max(lat, bbox[1]), bbox[3])
+  return haversineMiles(lat, lon, clampedLat, clampedLon)
+}
+
 const minVertexDistanceMiles = (
   geometry: GeoJSON.Geometry,
   lat: number,
@@ -294,6 +427,7 @@ const itemIntersectsRadius = (
 ) => {
   if (!detail.item.bbox || detail.features.length === 0) return false
   if (bboxContainsPoint(detail.item.bbox, lat, lon)) return true
+  if (minDistanceToBboxMiles(detail.item.bbox, lat, lon) <= radiusMiles) return true
 
   let minDistance = Infinity
   for (const feature of detail.features) {
@@ -322,14 +456,16 @@ const parsePolygonFeatures = (
 ): Array<GeoJSON.Feature<GeoJSON.Polygon>> => {
   const features: Array<GeoJSON.Feature<GeoJSON.Polygon>> = []
   const mergedAreas = elementsByLocalName(areaGroup, "abdMergedArea")
+  const polygonContainers =
+    mergedAreas.length > 0 ? mergedAreas : elementsByLocalName(areaGroup, "Abd")
 
-  for (const mergedArea of mergedAreas) {
-    const ring = elementsByLocalName(mergedArea, "Avx")
+  for (const polygonContainer of polygonContainers) {
+    const ring = elementsByLocalName(polygonContainer, "Avx")
       .map((vertex) => {
         const codeType = firstLocalText(vertex, "codeType")
         if (codeType && codeType !== "GRC") return null
-        const lat = toNumber(firstLocalText(vertex, "geoLat"))
-        const lon = toNumber(firstLocalText(vertex, "geoLong"))
+        const lat = toGeoCoordinate(firstLocalText(vertex, "geoLat"), "lat")
+        const lon = toGeoCoordinate(firstLocalText(vertex, "geoLong"), "lon")
         if (lat === null || lon === null) return null
         return [lon, lat] as [number, number]
       })
@@ -362,8 +498,8 @@ const parseCircleFeatures = (
   })
 
   for (const circle of circleVertices) {
-    const lat = toNumber(firstLocalText(circle, "geoLat"))
-    const lon = toNumber(firstLocalText(circle, "geoLong"))
+    const lat = toGeoCoordinate(firstLocalText(circle, "geoLat"), "lat")
+    const lon = toGeoCoordinate(firstLocalText(circle, "geoLong"), "lon")
     const radiusValue = toNumber(firstLocalText(circle, "valRadiusArc"))
     const radiusUnit = firstLocalText(circle, "uomRadiusArc")
 
@@ -404,7 +540,7 @@ const normalizeListRow = (row: FaaTfrListRow) => {
 }
 
 const fetchTfrList = async (db: SupabaseClient) => {
-  const cacheKey = "tfr:list:export"
+  const cacheKey = "tfr:list:v1:export"
   const cached = await getCachedJson<FaaTfrListRow[]>(db, cacheKey)
   if (cached) return cached
 
@@ -491,7 +627,7 @@ const fetchAndParseTfrDetail = async (
   db: SupabaseClient,
   listRow: NonNullable<ReturnType<typeof normalizeListRow>>
 ) => {
-  const cacheKey = `tfr:detail:${listRow.notamId}`
+  const cacheKey = `tfr:detail:v8:${listRow.notamId}`
   const cached = await getCachedJson<ParsedTfrDetail>(db, cacheKey)
   if (cached) return cached
 
@@ -550,6 +686,18 @@ const mapWithConcurrency = async <T, R>(
   return results
 }
 
+const classifyDetailFailure = (message: string): TfrFailureKind => {
+  const lower = message.toLowerCase()
+  if (lower.includes("aborterror") || lower.includes("timed out")) return "timeout"
+  if (lower.includes("request failed") || lower.includes("http") || lower.includes("status")) {
+    return "fetch"
+  }
+  if (lower.includes("parse") || lower.includes("xml") || lower.includes("domparser")) {
+    return "parse"
+  }
+  return "other"
+}
+
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") {
     return optionsResponse(request)
@@ -579,7 +727,7 @@ Deno.serve(async (request) => {
     }
 
     const db = createServiceRoleClient()
-    const finalCacheKey = `tfr:nearby:${lat.toFixed(4)}:${lon.toFixed(4)}:${radiusMiles.toFixed(1)}`
+    const finalCacheKey = `tfr:nearby:v8:${lat.toFixed(4)}:${lon.toFixed(4)}:${radiusMiles.toFixed(1)}`
     const cached = await getCachedJson<TfrResponse>(db, finalCacheKey)
     if (cached) {
       return jsonResponse(request, cached)
@@ -591,15 +739,28 @@ Deno.serve(async (request) => {
       .filter((row): row is NonNullable<ReturnType<typeof normalizeListRow>> => row !== null)
 
     let detailFailures = 0
+    const detailFailureKinds: Record<TfrFailureKind, number> = {
+      timeout: 0,
+      fetch: 0,
+      parse: 0,
+      other: 0,
+    }
+    const detailFailureSamples: string[] = []
     const parsedDetails = (
       await mapWithConcurrency(listRows, 8, async (listRow) => {
         try {
           return await fetchAndParseTfrDetail(db, listRow)
         } catch (error) {
           detailFailures += 1
+          const errorMessage = error instanceof Error ? error.message : String(error)
+          const failureKind = classifyDetailFailure(errorMessage)
+          detailFailureKinds[failureKind] += 1
+          if (detailFailureSamples.length < 3) {
+            detailFailureSamples.push(`${failureKind}:${listRow.notamId}: ${errorMessage}`)
+          }
           console.warn(
             `[tfr] skipping ${listRow.notamId}:`,
-            error instanceof Error ? error.message : error
+            errorMessage
           )
           return null
         }
@@ -617,7 +778,18 @@ Deno.serve(async (request) => {
       return a.item.notamId.localeCompare(b.item.notamId)
     })
 
-    const responsePayload: TfrResponse = {
+    const failureKindsSummary = Object.entries(detailFailureKinds)
+      .filter(([, count]) => count > 0)
+      .map(([kind, count]) => `${kind}=${count}`)
+      .join(", ")
+
+    const responsePayload: TfrResponse & {
+      debug?: {
+        detailFailures: number
+        detailFailureKinds: Record<TfrFailureKind, number>
+        detailFailureSamples: string[]
+      }
+    } = {
       featureCollection: {
         type: "FeatureCollection",
         features: nearbyDetails.flatMap((detail) => detail.features),
@@ -629,7 +801,18 @@ Deno.serve(async (request) => {
         ? {
             message: `Skipped ${detailFailures} TFR detail record${
               detailFailures === 1 ? "" : "s"
-            } due to FAA XML fetch/parse errors.`,
+            } due to FAA XML fetch/parse errors${
+              failureKindsSummary ? ` (${failureKindsSummary})` : ""
+            }.`,
+          }
+        : {}),
+      ...(detailFailures > 0 && nearbyDetails.length === 0
+        ? {
+            debug: {
+              detailFailures,
+              detailFailureKinds: detailFailureKinds,
+              detailFailureSamples,
+            },
           }
         : {}),
     }

@@ -323,8 +323,8 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
           </span>
           {loading && <span>Refreshing list...</span>}
         </div>
-        <div className="max-h-[520px] overflow-y-auto">
-          <table className="min-w-full text-left text-xs text-slate-300">
+        <div className="max-h-[520px] overflow-auto">
+          <table className="min-w-[760px] w-full text-left text-xs text-slate-300">
             <thead className="sticky top-0 bg-slate-950/90 text-[11px] uppercase tracking-[0.2em] text-slate-500">
               <tr>
                 <th className="px-4 py-3">Site</th>
@@ -351,7 +351,7 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
                       className="border-b border-slate-800/70 transition hover:bg-slate-900/70"
                     >
                       <td className="px-4 py-4">
-                        <div className="text-sm font-semibold text-white">
+                        <div className="break-words text-sm font-semibold text-white">
                           {getDisplayName(site)}
                         </div>
                         <div className="text-[11px] text-slate-500">
@@ -369,29 +369,31 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
                         {formatCoordinate(site.latitude)}, {formatCoordinate(site.longitude)}
                       </td>
                       <td className="px-4 py-4 text-right">
-                        <button
-                          type="button"
-                          onClick={() => setSelectedSite(site)}
-                          className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-[11px] font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200"
-                        >
-                          View Detail
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            if (!hasCoords) return
-                            onShowOnMap({
-                              lat: site.latitude as number,
-                              lon: site.longitude as number,
-                              name: site.site_name ?? site.site_number ?? "Site",
-                            })
-                          }}
-                          disabled={!hasCoords}
-                          className="ml-2 inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-[11px] font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
-                        >
-                          <MapPin className="h-3.5 w-3.5" />
-                          Show on Map
-                        </button>
+                        <div className="flex flex-wrap justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSite(site)}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-[11px] font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200"
+                          >
+                            View Detail
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (!hasCoords) return
+                              onShowOnMap({
+                                lat: site.latitude as number,
+                                lon: site.longitude as number,
+                                name: site.site_name ?? site.site_number ?? "Site",
+                              })
+                            }}
+                            disabled={!hasCoords}
+                            className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-3 py-2 text-[11px] font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+                          >
+                            <MapPin className="h-3.5 w-3.5" />
+                            Show on Map
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   )
@@ -421,8 +423,8 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
       />
 
       {selectedSite ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-8">
-          <div className="w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 px-4 py-4 sm:items-center sm:py-8">
+          <div className="my-auto w-full max-w-5xl overflow-hidden rounded-3xl border border-slate-800 bg-slate-900 text-slate-100 shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:overflow-y-auto">
             <header className="flex flex-wrap items-start justify-between gap-4 border-b border-slate-800 bg-slate-950/60 px-6 py-5">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-emerald-300">
@@ -476,8 +478,8 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
               </div>
             </header>
 
-            <div className="grid gap-6 px-6 py-6 lg:grid-cols-[1fr_1.1fr]">
-              <div className="space-y-4">
+            <div className="grid gap-6 px-4 py-4 sm:px-6 sm:py-6 xl:grid-cols-[1fr_1.1fr]">
+              <div className="min-w-0 space-y-4">
                 <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70">
                   {selectedSite.photo_url ? (
                     <img
@@ -522,7 +524,7 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
                 )}
               </div>
 
-              <div className="space-y-4">
+              <div className="min-w-0 space-y-4">
                 <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
                   <h4 className="text-sm font-semibold text-slate-200">
                     Site Metadata
@@ -533,9 +535,9 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
                         <p className="uppercase tracking-[0.2em] text-[10px] text-slate-500">
                           {field.label}
                         </p>
-                        <p className="mt-1 text-sm text-slate-200">
-                          {field.value}
-                        </p>
+                          <p className="mt-1 break-words text-sm text-slate-200">
+                            {field.value}
+                          </p>
                       </div>
                     ))}
                   </div>
@@ -552,10 +554,12 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
                         ([key, value]) => (
                           <div
                             key={key}
-                            className="flex items-center justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2"
+                            className="flex items-start justify-between gap-3 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2"
                           >
-                            <span className="text-slate-200">{key}</span>
-                            <span className="text-slate-400">{value}</span>
+                            <span className="min-w-0 break-words text-slate-200">{key}</span>
+                            <span className="min-w-0 break-words text-right text-slate-400">
+                              {value}
+                            </span>
                           </div>
                         )
                       )

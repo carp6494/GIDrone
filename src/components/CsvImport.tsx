@@ -307,17 +307,17 @@ export function CsvImport({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 px-4 py-8">
-      <div className="w-full max-w-4xl rounded-3xl border border-slate-800 bg-slate-900 p-6 text-slate-100 shadow-2xl">
-        <header className="flex items-start justify-between gap-4">
-          <div>
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-slate-950/80 px-4 py-4 sm:items-center sm:py-8">
+      <div className="my-auto w-full max-w-4xl rounded-3xl border border-slate-800 bg-slate-900 p-4 text-slate-100 shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:overflow-y-auto sm:p-6">
+        <header className="flex flex-wrap items-start justify-between gap-4">
+          <div className="min-w-0">
             <p className="text-xs uppercase tracking-[0.35em] text-emerald-300">
               CSV Import
             </p>
-            <h3 className="mt-2 text-2xl font-semibold text-white">
+            <h3 className="mt-2 text-[clamp(1.25rem,3vw,1.5rem)] font-semibold text-white">
               Map columns and import sites
             </h3>
-            <p className="mt-2 text-sm text-slate-300">
+            <p className="mt-2 break-words text-sm text-slate-300">
               Upload a CSV file, match columns to your schema, and review the
               first three rows before uploading.
             </p>
@@ -325,19 +325,19 @@ export function CsvImport({
           <button
             type="button"
             onClick={handleClose}
-            className="rounded-full border border-slate-700 p-2 text-slate-300 transition hover:border-slate-500 hover:text-white"
+            className="shrink-0 rounded-full border border-slate-700 p-2 text-slate-300 transition hover:border-slate-500 hover:text-white"
             aria-label="Close CSV import"
           >
             <X className="h-4 w-4" />
           </button>
         </header>
 
-        <div className="mt-6 grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+        <div className="mt-6 grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
           <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
-            <label className="flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-dashed border-slate-700 p-4 text-sm text-slate-300 transition hover:border-emerald-400">
-              <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer flex-wrap items-center justify-between gap-4 rounded-2xl border border-dashed border-slate-700 p-4 text-sm text-slate-300 transition hover:border-emerald-400">
+              <div className="flex min-w-0 items-center gap-3">
                 <Upload className="h-4 w-4 text-emerald-300" />
-                <span>{fileName ?? "Choose a CSV file"}</span>
+                <span className="break-words">{fileName ?? "Choose a CSV file"}</span>
               </div>
               <span className="text-xs text-slate-400">.csv</span>
               <input
@@ -391,9 +391,9 @@ export function CsvImport({
               {SCHEMA_FIELDS.map((field) => (
                 <label
                   key={field.key}
-                  className="flex items-center justify-between gap-3 text-xs text-slate-300"
+                  className="flex flex-col items-stretch gap-2 text-xs text-slate-300 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
                 >
-                  <span className="text-slate-200">
+                  <span className="min-w-0 break-words text-slate-200">
                     {field.label}
                     {field.required ? " *" : ""}
                   </span>
@@ -402,7 +402,7 @@ export function CsvImport({
                     onChange={(event) =>
                       handleMappingChange(field.key, event.target.value)
                     }
-                    className="w-44 rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200"
+                    className="w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-1 text-xs text-slate-200 sm:w-44"
                   >
                     <option value="">Not mapped</option>
                     {headers.map((header) => (

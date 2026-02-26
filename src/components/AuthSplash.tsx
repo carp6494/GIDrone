@@ -31,19 +31,19 @@ export function AuthSplash({
       <div className="absolute inset-0 opacity-10 [background-image:linear-gradient(rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.14)_1px,transparent_1px)] [background-size:42px_42px]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(56,189,248,0.1),transparent_55%)]" />
 
-      <header className="absolute left-0 top-0 z-10 p-6 sm:p-8">
+      <header className="absolute left-0 top-0 z-10 p-4 sm:p-8">
         <img
           src={logo}
           alt="GI Drone"
-          className="h-12 w-auto select-none sm:h-14"
+          className="h-10 w-auto select-none sm:h-14"
           draggable={false}
         />
       </header>
 
-      <main className="relative z-10 flex min-h-screen items-center justify-center px-4 py-16">
-        <section className="w-full max-w-md rounded-3xl border border-white/15 bg-white/10 p-8 shadow-2xl shadow-slate-950/40 backdrop-blur-xl">
+      <main className="relative z-10 flex min-h-screen items-start justify-center px-4 py-20 sm:items-center sm:py-16">
+        <section className="w-full max-w-md rounded-3xl border border-white/15 bg-white/10 p-5 shadow-2xl shadow-slate-950/40 backdrop-blur-xl sm:max-h-[calc(100svh-4rem)] sm:overflow-y-auto sm:p-8">
           <div className="space-y-2 text-center">
-            <h1 className="text-2xl font-semibold tracking-tight text-white sm:text-3xl">
+            <h1 className="text-[clamp(1.6rem,4vw,1.875rem)] font-semibold tracking-tight text-white">
               Welcome to GI Drone
             </h1>
             <p className="text-sm leading-6 text-slate-200">

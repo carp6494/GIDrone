@@ -65,13 +65,13 @@ export function AuthOverlay({ isOpen }: AuthOverlayProps) {
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/80 px-4 py-10 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900/90 p-8 text-slate-100 shadow-2xl">
+    <div className="fixed inset-0 z-[60] flex items-start justify-center overflow-y-auto bg-slate-950/80 px-4 py-6 backdrop-blur-sm sm:items-center sm:py-10">
+      <div className="my-auto w-full max-w-lg rounded-3xl border border-slate-800 bg-slate-900/90 p-5 text-slate-100 shadow-2xl sm:max-h-[calc(100svh-3rem)] sm:overflow-y-auto sm:p-8">
         <div className="flex flex-col gap-3 text-center">
           <p className="text-xs uppercase tracking-[0.45em] text-emerald-300">
             Secure Access Required
           </p>
-          <h2 className="text-3xl font-semibold text-white">
+          <h2 className="text-[clamp(1.65rem,4vw,1.875rem)] font-semibold text-white">
             Sign in to continue
           </h2>
           <p className="text-sm text-slate-300">
@@ -81,7 +81,7 @@ export function AuthOverlay({ isOpen }: AuthOverlayProps) {
         </div>
 
         <div className="mt-6 space-y-4">
-          <div className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
             <button
               type="button"
               onClick={() => setMode("password")}
@@ -149,7 +149,7 @@ export function AuthOverlay({ isOpen }: AuthOverlayProps) {
               </>
             )}
           </button>
-          <p className="text-center text-[11px] text-slate-500">
+          <p className="break-words text-center text-[11px] text-slate-500">
             Supabase authentication required for Mission Slate access.
           </p>
         </div>

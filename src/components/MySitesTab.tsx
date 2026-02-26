@@ -459,10 +459,10 @@ export function MySitesTab() {
         </div>
       )}
 
-      <div className="grid gap-6 lg:grid-cols-[1.1fr_1.9fr]">
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/50 p-6">
-          <div className="flex items-center justify-between">
-            <div>
+      <div className="grid gap-6 xl:grid-cols-[1.1fr_1.9fr]">
+        <div className="min-w-0 rounded-3xl border border-slate-800 bg-slate-900/50 p-4 sm:p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
               <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
                 Site Roster
               </p>
@@ -491,7 +491,7 @@ export function MySitesTab() {
                 key={site.id}
                 type="button"
                 onClick={() => handleSelect(site.id)}
-                className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition ${
+                className={`flex w-full min-w-0 items-start gap-4 rounded-2xl border p-4 text-left transition ${
                   selectedId === site.id
                     ? "border-emerald-400/60 bg-emerald-400/10"
                     : "border-slate-800 bg-slate-950/60 hover:border-slate-700"
@@ -510,14 +510,14 @@ export function MySitesTab() {
                     </div>
                   )}
                 </div>
-                <div className="flex-1 space-y-1">
-                  <div className="flex items-center justify-between text-sm font-semibold text-white">
-                    <span>{site.name}</span>
-                    <span className="text-xs text-slate-400">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex flex-col gap-1 text-sm font-semibold text-white sm:flex-row sm:items-center sm:justify-between">
+                    <span className="break-words">{site.name}</span>
+                    <span className="break-words text-xs text-slate-400 sm:text-right">
                       {formatCoord(site.lat)}, {formatCoord(site.lng)}
                     </span>
                   </div>
-                  <p className="text-xs text-slate-400">
+                  <p className="break-words text-xs text-slate-400">
                     {site.notes || "No notes yet."}
                   </p>
                 </div>
@@ -526,7 +526,7 @@ export function MySitesTab() {
           </div>
         </div>
 
-        <div className="rounded-3xl border border-slate-800 bg-slate-900/50 p-6">
+        <div className="min-w-0 rounded-3xl border border-slate-800 bg-slate-900/50 p-4 sm:p-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-[0.4em] text-slate-500">
@@ -580,10 +580,10 @@ export function MySitesTab() {
             </div>
           </div>
 
-          <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_1.6fr]">
-            <div className="space-y-4">
+          <div className="mt-6 grid gap-6 xl:grid-cols-[1.1fr_1.6fr]">
+            <div className="min-w-0 space-y-4">
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
                     Photo
                   </p>
@@ -640,7 +640,7 @@ export function MySitesTab() {
               </div>
             </div>
 
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="space-y-2 text-xs uppercase tracking-[0.2em] text-slate-400">
                   Site Name
@@ -693,7 +693,7 @@ export function MySitesTab() {
               </div>
 
               <div className="rounded-2xl border border-slate-800 bg-slate-950/60 p-4">
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
                     Custom Fields
                   </p>
@@ -715,7 +715,10 @@ export function MySitesTab() {
                     </p>
                   )}
                   {form.customFields.map((field, index) => (
-                    <div key={`${field.key}-${index}`} className="flex gap-3">
+                    <div
+                      key={`${field.key}-${index}`}
+                      className="flex flex-col gap-3 sm:flex-row"
+                    >
                       <input
                         type="text"
                         value={field.key}
@@ -724,7 +727,7 @@ export function MySitesTab() {
                         }
                         disabled={!isEditing}
                         placeholder="Field"
-                        className="w-1/3 rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60 disabled:opacity-70"
+                        className="w-full rounded-2xl border border-slate-800 bg-slate-950/70 px-3 py-2 text-sm text-white outline-none transition focus:border-emerald-400/60 disabled:opacity-70 sm:w-1/3"
                       />
                       <input
                         type="text"
@@ -740,7 +743,7 @@ export function MySitesTab() {
                         type="button"
                         onClick={() => handleCustomFieldRemove(index)}
                         disabled={!isEditing}
-                        className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-100 transition hover:bg-rose-500/20 disabled:opacity-50"
+                        className="self-start rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-rose-100 transition hover:bg-rose-500/20 disabled:opacity-50"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>

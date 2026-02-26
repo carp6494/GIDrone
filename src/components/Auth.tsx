@@ -63,12 +63,12 @@ export function Auth({ variant = "full" }: AuthProps) {
   }
 
   const card = (
-    <div className="w-full rounded-3xl border border-slate-800 bg-slate-900/70 p-8 shadow-xl">
+    <div className="w-full rounded-3xl border border-slate-800 bg-slate-900/70 p-5 shadow-xl sm:p-8">
       <div className="flex flex-col gap-3 text-center">
         <p className="text-xs uppercase tracking-[0.45em] text-emerald-300">
           Mission Slate Access
         </p>
-        <h2 className="text-3xl font-semibold text-white">
+        <h2 className="text-[clamp(1.65rem,4vw,1.875rem)] font-semibold text-white">
           Secure operator access
         </h2>
         <p className="text-sm text-slate-300">
@@ -78,7 +78,7 @@ export function Auth({ variant = "full" }: AuthProps) {
       </div>
 
       <div className="mt-6 space-y-4">
-        <div className="flex items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
+        <div className="flex flex-wrap items-center justify-center gap-2 text-[11px] uppercase tracking-[0.3em] text-slate-500">
           <button
             type="button"
             onClick={() => setMode("password")}
@@ -146,10 +146,10 @@ export function Auth({ variant = "full" }: AuthProps) {
             </>
           )}
         </button>
-        <p className="text-center text-[11px] text-slate-500">
-          Supabase authentication required for Mission Slate access.
-        </p>
-      </div>
+          <p className="break-words text-center text-[11px] text-slate-500">
+            Supabase authentication required for Mission Slate access.
+          </p>
+        </div>
 
       {(error || status) && (
         <div className="mt-6 rounded-2xl border border-slate-800 bg-slate-950/70 p-4 text-xs">
@@ -165,15 +165,15 @@ export function Auth({ variant = "full" }: AuthProps) {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
-      <div className="relative min-h-screen overflow-hidden">
+      <div className="min-h-screen bg-slate-950 text-slate-100">
+        <div className="relative min-h-screen overflow-hidden">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(15,23,42,0.9),_transparent_60%)]" />
         <div className="pointer-events-none absolute -left-32 top-20 h-80 w-80 rounded-full bg-emerald-500/15 blur-[140px]" />
         <div className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 rounded-full bg-cyan-500/15 blur-[160px]" />
 
-        <main className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col items-center justify-center px-6 py-12">
-          {card}
-        </main>
+          <main className="relative mx-auto flex min-h-screen w-full max-w-3xl flex-col items-center justify-center px-4 py-8 sm:px-6 sm:py-12">
+            {card}
+          </main>
       </div>
     </div>
   )

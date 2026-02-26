@@ -562,19 +562,19 @@ function AppShell() {
         <div className="pointer-events-none absolute -left-32 top-20 h-80 w-80 rounded-full bg-emerald-500/10 blur-[140px] dark:bg-emerald-500/15" />
         <div className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 rounded-full bg-cyan-500/10 blur-[160px] dark:bg-cyan-500/15" />
 
-        <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-10 px-6 py-12">
-          <div ref={profileMenuRef} className="absolute right-6 top-6 z-30">
+        <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:gap-10 sm:px-6 sm:py-12">
+          <div ref={profileMenuRef} className="absolute right-4 top-4 z-30 sm:right-6 sm:top-6">
             <button
               type="button"
               onClick={() => setIsProfileMenuOpen((open) => !open)}
-              className="flex items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-900/85 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-900"
+              className="flex max-w-[calc(100vw-2rem)] items-center gap-2 rounded-full border border-slate-200 bg-white/85 px-3 py-2 text-sm text-slate-700 shadow-sm backdrop-blur transition hover:border-slate-300 hover:bg-white dark:border-slate-800 dark:bg-slate-900/85 dark:text-slate-200 dark:hover:border-slate-700 dark:hover:bg-slate-900"
               aria-haspopup="menu"
               aria-expanded={isProfileMenuOpen}
             >
               <span className="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 bg-slate-50 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200">
                 <UserIcon className="h-4 w-4" />
               </span>
-              <span className="hidden max-w-[10rem] truncate text-xs font-medium sm:block">
+              <span className="hidden max-w-[8rem] truncate text-xs font-medium md:block md:max-w-[10rem]">
                 {user?.email ?? "Profile"}
               </span>
               <ChevronDown
@@ -583,15 +583,15 @@ function AppShell() {
             </button>
 
             {isProfileMenuOpen ? (
-              <div
-                role="menu"
-                className="absolute right-0 mt-2 w-72 rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl shadow-slate-900/10 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-slate-950/40"
-              >
-                <div className="rounded-xl px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
-                  <p className="font-medium text-slate-700 dark:text-slate-200">
-                    {user?.email ?? "Not signed in"}
-                  </p>
-                </div>
+                <div
+                  role="menu"
+                  className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-2xl border border-slate-200 bg-white/95 p-2 text-left shadow-xl shadow-slate-900/10 backdrop-blur dark:border-slate-800 dark:bg-slate-900/95 dark:shadow-slate-950/40"
+                >
+                  <div className="rounded-xl px-3 py-2 text-xs text-slate-500 dark:text-slate-400">
+                    <p className="break-all font-medium text-slate-700 dark:text-slate-200">
+                      {user?.email ?? "Not signed in"}
+                    </p>
+                  </div>
 
                 <div className="my-1 h-px bg-slate-200 dark:bg-slate-800" />
 
@@ -681,13 +681,13 @@ function AppShell() {
             ) : null}
           </div>
 
-          <header className="flex flex-col items-center gap-6 pt-14 text-center sm:pt-4">
+          <header className="flex flex-col items-center gap-6 pt-16 text-center sm:pt-4">
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-[0.6em] text-emerald-300">GI Drone</p>
-              <h1 className="text-4xl font-semibold text-slate-900 dark:text-white md:text-5xl">
+              <h1 className="text-[clamp(2rem,4vw,3rem)] font-semibold text-slate-900 dark:text-white">
                 Aviation Safety Analytics
               </h1>
-              <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300 md:text-base">
+              <p className="max-w-2xl px-1 text-sm text-slate-600 dark:text-slate-300 md:px-0 md:text-base">
                 Professional-grade aviation weather, customizable safety thresholds, and integrated GIS
                 layers for precision drone mission planning.
               </p>

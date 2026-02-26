@@ -610,8 +610,8 @@ const ForecastSection = ({
           </button>
         </div>
       ) : (
-      <div className="mt-5 overflow-x-auto pb-1 [scrollbar-color:rgba(16,185,129,0.55)_rgba(15,23,42,0.75)] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-2.5 [&::-webkit-scrollbar-track]:rounded-full [&::-webkit-scrollbar-track]:bg-slate-900/80 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:border [&::-webkit-scrollbar-thumb]:border-slate-900/80 [&::-webkit-scrollbar-thumb]:bg-emerald-400/45 hover:[&::-webkit-scrollbar-thumb]:bg-emerald-300/55">
-        <div className="flex min-w-max gap-4 pb-1.5">
+      <div className="mt-5">
+        <div className="grid grid-cols-8 gap-2">
           {forecastDays.map((day, index) => {
             const windSpeed =
               day.windSpeedMph !== null
@@ -659,7 +659,7 @@ const ForecastSection = ({
                   onSelectDay(selectedDayIndex === index ? null : index)
                 }
                 key={day.dt}
-                className={`relative min-w-[180px] rounded-2xl border px-4 py-[14px] text-left transition ${
+                className={`relative min-w-0 w-full rounded-2xl border px-2.5 py-2 text-left transition ${
                   forecastCardToneMap[dayStatus]
                 } ${
                   isActive
@@ -667,36 +667,33 @@ const ForecastSection = ({
                     : "hover:brightness-125"
                 }`}
               >
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start justify-center gap-2">
                   <div>
-                    <div className="flex items-center gap-2">
-                      <div className="text-xs uppercase tracking-[0.3em] text-white">
+                    <div className="flex items-center justify-center gap-1">
+                      <div className="text-center text-[12px] uppercase tracking-[0.18em] text-white">
                         {formatForecastDate(day.dt)}
                       </div>
-                      {index === 0 ? (
-                        <div className="text-[0.90rem] font-bold uppercase tracking-[0.3em] text-emerald-300">
-                          LIVE
-                        </div>
-                      ) : null}
                     </div>
                   </div>
                 </div>
-                <div className="mt-2.5 flex items-center gap-3">
-                  <ForecastIcon
-                    weatherId={day.weatherId}
-                    weatherMain={day.weatherMain}
-                    className="h-7 w-7"
-                  />
-                  <div className="text-sm font-semibold text-white">
-                    {day.weatherMain ?? "Clear"}
+                <div className="mt-2 flex items-center justify-center gap-2">
+                  <div className="flex min-w-0 items-center justify-center gap-4">
+                    <ForecastIcon
+                      weatherId={day.weatherId}
+                      weatherMain={day.weatherMain}
+                      className="h-8 w-8"
+                    />
+                    <div className="min-w-0 break-words text-center text-xs font-semibold leading-tight text-white">
+                      {day.weatherMain ?? "Clear"}
+                    </div>
                   </div>
                 </div>
-                <div className="mt-3.5 grid grid-cols-2 gap-1.5 text-xs text-slate-300">
+                <div className="mt-2.5 grid grid-cols-2 gap-x-6 gap-y-1 text-[11px] text-slate-300">
                   <div>
-                    <p className="text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
-                      High / Low
+                    <p className="text-[0.48rem] uppercase tracking-[0.15em] text-slate-500">
+                      High/Low
                     </p>
-                    <p className="mt-0.5 text-sm text-white">
+                    <p className="mt-0.5 whitespace-nowrap text-xxs font-semibold leading-tight text-white">
                       {day.tempMaxF !== null
                         ? `${formatValue(day.tempMaxF, 0)}°`
                         : "--"}
@@ -707,32 +704,32 @@ const ForecastSection = ({
                     </p>
                   </div>
                   <div>
-                    <p className="text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
+                    <p className="text-[0.48rem] uppercase tracking-[0.15em] text-slate-500">
                       Wind
                     </p>
-                    <p className="mt-0.5 text-sm text-white">
+                    <p className="mt-0.5 whitespace-nowrap text-xxs font-semibold leading-tight text-white">
                       {windSpeed !== null ? formatValue(windSpeed, 0) : "--"}{" "}
                       {unit}
                     </p>
                   </div>
-                  <div className="col-span-2">
-                    <p className="text-[0.6rem] uppercase tracking-[0.25em] text-slate-500">
+                  <div>
+                    <p className="text-[0.48rem] uppercase tracking-[0.15em] text-slate-500">
                       Precip
                     </p>
-                    <p className="mt-0.5 text-sm text-white">
+                    <p className="mt-0.5 whitespace-nowrap text-xxs font-semibold leading-tight text-white">
                       {day.precipitationProbability !== null
                         ? `${formatValue(day.precipitationProbability, 0)}%`
                         : "--"}
                     </p>
                   </div>
-                </div>
-                <div className="absolute bottom-2.5 right-3 text-right">
-                  <p className="text-[0.55rem] uppercase tracking-[0.3em] text-slate-400">
-                    Score
-                  </p>
-                  <p className="text-lg font-bold text-white">
-                    {formatValue(dayScore, 0)}
-                  </p>
+                  <div className="text-right">
+                    <p className="text-[0.48rem] uppercase tracking-[0.15em] text-slate-400">
+                      Score
+                    </p>
+                    <p className="mt-0.5 text-base font-bold leading-none text-white">
+                      {formatValue(dayScore, 0)}
+                    </p>
+                  </div>
                 </div>
               </button>
             )
@@ -893,7 +890,7 @@ const Tile = ({
     <button
       type="button"
       onClick={onClick}
-      className={`group relative h-[190px] min-w-0 cursor-pointer overflow-hidden rounded-2xl border px-4 py-[14px] text-left transition hover:brightness-110 ${statusClasses}`}
+      className={`group relative h-[150px] min-w-0 cursor-pointer overflow-hidden rounded-2xl border px-4 py-[14px] text-left transition hover:brightness-110 ${statusClasses}`}
     >
       <div className="pointer-events-none absolute inset-0 rounded-2xl bg-slate-950/45" />
       <div className="relative flex h-full min-w-0 flex-col">
@@ -3351,7 +3348,6 @@ export function ConditionsTab({
           </div>
         </header>
 
-
         {weather && (
           <ForecastSection
             forecastDays={forecastDays}
@@ -3480,7 +3476,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<CloudSun size={32} />}
                   label="Temperature"
-                  labelClassName="text-[clamp(0.75rem,1vw,0.74rem)] tracking-[0.14em]"
+                  labelClassName="text-[clamp(0.70rem,1vw,0.60rem)] tracking-[0.14em]"
                   value={`${formatValue(activeData?.tempF ?? weather.current.tempF, 0)}°F`}
                   description="Ambient reading"
                   status={flyability.metrics.temperature}
@@ -3503,7 +3499,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<Gauge size={32} />}
                   label="Barometric Pressure"
-                  labelClassName="text-[clamp(0.65rem,1.35vw,0.78rem)] tracking-[0.25em]"
+                  labelClassName="text-[clamp(0.65rem,1.35vw,0.70rem)] tracking-[0.25em]"
                   value={
                     <>
                       {formatValue(activeData?.pressure ?? weather.current.pressure, 0)}
@@ -3573,7 +3569,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<CloudDrizzle size={32} />}
                   label="Precipitation"
-                  labelClassName="text-[clamp(0.70rem,0.95vw,0.72rem)] tracking-[0.12em]"
+                  labelClassName="text-[clamp(0.40rem,0.95vw,0.70rem)] tracking-[0.12em]"
                   value={
                     activeData?.isForecast
                       ? activeData.precipitationType ??
@@ -3607,7 +3603,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<CloudDrizzle size={32} />}
                   label="Precipitation Probability"
-                  labelClassName="text-[clamp(0.65rem,1.35vw,0.68rem)] tracking-[0.25em]"
+                  labelClassName="text-[clamp(0.40rem,0.95vw,0.70rem)] tracking-[0.25em]"
                   value={
                     activeData?.precipitationProbability !== null &&
                     activeData?.precipitationProbability !== undefined
@@ -3667,7 +3663,7 @@ export function ConditionsTab({
                 <Tile
                   icon={<LocateFixed size={32} />}
                   label="GPS Accuracy"
-                  labelClassName="text-[clamp(0.68rem,1.35vw,0.85rem)] tracking-[0.25em]"
+                  labelClassName="text-[clamp(0.58rem,1.35vw,0.65rem)] tracking-[0.25em]"
                   value={
                     !activeData?.isForecast && activeGpsAccuracy !== null
                       ? (
@@ -3687,9 +3683,9 @@ export function ConditionsTab({
                 />
                 <Tile
                   icon={twilightIcon}
-                  iconClassName="-mt-7"
+                  iconClassName="-mt-4"
                   label="Civil Twilight Hours"
-                  labelClassName="text-[clamp(0.68rem,1.35vw,0.85rem)] tracking-[0.25em]"
+                  labelClassName="text-[clamp(0.68rem,1.0vw,0.65rem)] tracking-[0.25em]"
                   value={twilightValue}
                   valueClassName="w-full text-xs leading-snug sm:text-sm"
                   description="Solar window"
