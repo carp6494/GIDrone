@@ -7,6 +7,17 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.2.5] - 2026-02-26
+
+### Added
+- New top-level `Aviation` tab that hosts the METAR/TFR/NOTAM aviation panel as its own page section
+- Top tab bar settings popover (`Tab Bar`) with localStorage-backed controls for alignment, spacing mode, size, and icon visibility (`tabBar.alignment`, `tabBar.spacing`, `tabBar.size`, `tabBar.icons`)
+
+### Changed
+- Reordered top-level tabs to `Conditions | Aviation | Radar | Sites`
+- Moved the METAR/TFR/NOTAM block out of the Conditions page and into the new Aviation tab without changing the aviation panel styling/content
+- Updated top tab bar layout to support centered/even spacing by default, equal-width tabs, mobile wrapping, and responsive single-row behavior on larger screens
+
 ## [0.2.4] - 2026-02-25
 
 ### Changed
