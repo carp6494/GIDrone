@@ -3,14 +3,11 @@ import {
   useMemo,
   useRef,
   useState,
-  type FormEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react"
-import { createPortal } from "react-dom"
 import {
   Activity,
-  ChevronDown,
   Cloud,
   CloudDrizzle,
   CloudFog,
@@ -28,7 +25,6 @@ import {
   Pause,
   Play,
   Settings,
-  Trash2,
   ZoomIn,
   ZoomOut,
   Sun,
@@ -39,11 +35,10 @@ import {
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 
+import type { Coordinates } from "../lib/location/types"
 import type { ThemeMode } from "../lib/theme"
 import {
   fetchCurrentWeather,
-  geocodeLocation,
-  geocodeLocations,
   getLastWeatherFetchTimestamp,
   getKPIndex,
 } from "../services/weatherService"
@@ -62,18 +57,12 @@ type UnitType = "mph" | "kt"
 
 type ConditionsTabProps = {
   unit: UnitType
-  useGps: boolean
   timeFormat: TimeFormat
   theme: ThemeMode
   onTabChange: (tab: "conditions" | "aviation" | "radar" | "sites") => void
-  onActiveCoordsChange?: (coords: { lat: number; lon: number }) => void
-  topBarPortalTarget?: HTMLElement | null
-}
-
-type LocationSelection = {
-  name: string
-  lat: number
-  lon: number
+  activeCoords: Coordinates
+  activeLocationLabel?: string | null
+  activeGpsAccuracy?: number | null
 }
 
 type CurrentConditions = {
@@ -169,26 +158,10 @@ type TfrEntry = {
   location: string
 }
 
-const DEFAULT_COORDS = { lat: 29.7604, lon: -95.3698 }
 const KNOTS_PER_MPH = 0.868976
 const MILES_PER_METER = 0.000621371
 const INCHES_PER_MM = 0.0393701
-const RECENT_SEARCHES_KEY = "gi-drone.recent-searches"
 const THRESHOLDS_STORAGE_KEY = "gi-drone.thresholds"
-const MAX_RECENT_SEARCHES = 6
-
-const buildRecentSearchKey = (selection: LocationSelection) =>
-  `${selection.lat.toFixed(3)}:${selection.lon.toFixed(3)}`
-
-const dedupeRecentSearches = (entries: LocationSelection[]) => {
-  const seen = new Set<string>()
-  return entries.filter((entry) => {
-    const key = buildRecentSearchKey(entry)
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
 
 const MOCK_AVIATION_DATA: {
   metars: MetarEntry[]
@@ -2772,7 +2745,7 @@ const RadarSnapshotPanel = ({
               setActiveFrameIndex(Math.round(nextValue))
             }}
             disabled={frames.length <= 1}
-            className="radar-timeline-slider h-1.5 w-full cursor-pointer accent-emerald-300 disabled:cursor-not-allowed disabled:opacity-40"
+            className="radar-timeline-slider h-1.5 w-full cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed disabled:opacity-40"
             aria-label="Radar frame timeline"
           />
           <span className="shrink-0 text-[10px] uppercase tracking-[0.24em] text-slate-300">
@@ -2786,37 +2759,19 @@ const RadarSnapshotPanel = ({
 
 export function ConditionsTab({
   unit,
-  useGps,
   timeFormat,
   theme,
   onTabChange,
-  onActiveCoordsChange,
-  topBarPortalTarget,
+  activeCoords,
+  activeGpsAccuracy = null,
+  activeLocationLabel = null,
 }: ConditionsTabProps) {
-  const [coords, setCoords] = useState(DEFAULT_COORDS)
   const [weather, setWeather] = useState<WeatherSnapshot | null>(null)
-  const [gpsAccuracy, setGpsAccuracy] = useState<number | null>(null)
   const [status, setStatus] = useState<"idle" | "loading" | "error">("idle")
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [forecastErrorMessage, setForecastErrorMessage] = useState<string | null>(null)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [searchStatus, setSearchStatus] = useState<"idle" | "loading" | "error">(
-    "idle"
-  )
-  const [searchError, setSearchError] = useState<string | null>(null)
-  const [searchPredictions, setSearchPredictions] = useState<LocationSelection[]>([])
-  const [isPredictionOpen, setIsPredictionOpen] = useState(false)
-  const [isPredictionLoading, setIsPredictionLoading] = useState(false)
-  const [searchSelection, setSearchSelection] = useState<LocationSelection | null>(
-    null
-  )
-  const [locateStatus, setLocateStatus] = useState<"idle" | "loading" | "error">(
-    "idle"
-  )
-  const [locateError, setLocateError] = useState<string | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [locationRevision, setLocationRevision] = useState(0)
-  const [recentSearches, setRecentSearches] = useState<LocationSelection[]>([])
   const [thresholdOverrides, setThresholdOverrides] = useState<FlyabilityThresholds>(
     {}
   )
@@ -2829,20 +2784,6 @@ export function ConditionsTab({
   const [showNotams, setShowNotams] = useState(false)
   const [showTfrs, setShowTfrs] = useState(false)
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
-  const locationsMenuRef = useRef<HTMLDetailsElement | null>(null)
-  const searchFieldRef = useRef<HTMLDivElement | null>(null)
-  const predictionRequestRef = useRef(0)
-
-  const activeCoords = searchSelection
-    ? { lat: searchSelection.lat, lon: searchSelection.lon }
-    : useGps
-      ? coords
-      : DEFAULT_COORDS
-  const activeGpsAccuracy = searchSelection || !useGps ? null : gpsAccuracy
-
-  useEffect(() => {
-    onActiveCoordsChange?.(activeCoords)
-  }, [activeCoords.lat, activeCoords.lon, onActiveCoordsChange])
 
   const lastUpdatedAt = getLastWeatherFetchTimestamp()
   const hasLastUpdated = typeof lastUpdatedAt === "number"
@@ -2853,59 +2794,11 @@ export function ConditionsTab({
     ? formatRelativeTime(lastUpdatedAt, now)
     : "--"
 
-  const requestGpsLocation = () =>
-    new Promise<GeolocationPosition>((resolve, reject) => {
-      if (!navigator.geolocation) {
-        reject(new Error("Geolocation is not supported on this device."))
-        return
-      }
-      navigator.geolocation.getCurrentPosition(resolve, reject, {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000,
-      })
-    })
-
-  useEffect(() => {
-    if (!useGps) return
-    handleLocateMe()
-  }, [useGps])
-
   useEffect(() => {
     const interval = window.setInterval(() => {
       setNow(Date.now())
     }, 60000)
     return () => window.clearInterval(interval)
-  }, [])
-
-  useEffect(() => {
-    if (typeof window === "undefined") return
-    try {
-      const stored = window.localStorage.getItem(RECENT_SEARCHES_KEY)
-      if (!stored) return
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed)) {
-        const sanitized = dedupeRecentSearches(
-          parsed.filter(
-            (item) =>
-              item &&
-              typeof item.name === "string" &&
-              typeof item.lat === "number" &&
-              typeof item.lon === "number"
-          ).map((item) => {
-            const parsedName = parseLocationLabel(item.name)
-            return {
-              ...item,
-              name: abbreviateLocation(parsedName.city, parsedName.state, parsedName.country),
-            }
-          })
-        ).slice(0, MAX_RECENT_SEARCHES)
-        setRecentSearches(sanitized)
-        window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(sanitized))
-      }
-    } catch {
-      setRecentSearches([])
-    }
   }, [])
 
   useEffect(() => {
@@ -2931,211 +2824,12 @@ export function ConditionsTab({
   }, [thresholdOverrides])
 
   useEffect(() => {
-    if (!searchSelection) return
-    setRecentSearches((prev) => {
-      const next = dedupeRecentSearches([searchSelection, ...prev]).slice(0, MAX_RECENT_SEARCHES)
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next))
-      }
-      return next
-    })
-  }, [searchSelection])
-
-  useEffect(() => {
     if (!weather) return
     setSelectedDayIndex(null)
   }, [weather?.locationName, weather?.forecast?.length])
 
   const handleWeatherRefresh = () => {
     setLocationRevision((value) => value + 1)
-  }
-
-  const applySearchSelection = (selection: LocationSelection, nextQuery = selection.name) => {
-    setSearchQuery(nextQuery)
-    setSearchSelection(selection)
-    setSearchError(null)
-    setSearchStatus("idle")
-    setLocateError(null)
-    setSearchPredictions([])
-    setIsPredictionOpen(false)
-    setLocationRevision((value) => value + 1)
-  }
-
-  useEffect(() => {
-    const trimmed = searchQuery.trim()
-
-    if (!trimmed) {
-      setSearchPredictions([])
-      setIsPredictionOpen(false)
-      setIsPredictionLoading(false)
-      return
-    }
-
-    if (trimmed.length < 2) {
-      setSearchPredictions([])
-      setIsPredictionOpen(false)
-      setIsPredictionLoading(false)
-      return
-    }
-
-    if (searchSelection && trimmed === searchSelection.name.trim()) {
-      setSearchPredictions([])
-      setIsPredictionOpen(false)
-      setIsPredictionLoading(false)
-      return
-    }
-
-    const requestId = predictionRequestRef.current + 1
-    predictionRequestRef.current = requestId
-    const debounceHandle = window.setTimeout(async () => {
-      try {
-        setIsPredictionLoading(true)
-        const matches = await geocodeLocations({
-          query: trimmed,
-          limit: 5,
-        })
-
-        if (predictionRequestRef.current !== requestId) return
-
-        const nextPredictions = dedupeRecentSearches(matches).slice(0, 5)
-        setSearchPredictions(nextPredictions)
-        setIsPredictionOpen(nextPredictions.length > 0)
-      } catch {
-        if (predictionRequestRef.current !== requestId) return
-        setSearchPredictions([])
-        setIsPredictionOpen(false)
-      } finally {
-        if (predictionRequestRef.current === requestId) {
-          setIsPredictionLoading(false)
-        }
-      }
-    }, 220)
-
-    return () => {
-      window.clearTimeout(debounceHandle)
-    }
-  }, [searchQuery, searchSelection])
-
-  useEffect(() => {
-    const handlePointerDown = (event: MouseEvent) => {
-      const target = event.target as Node
-      const clickedInsideSearchField =
-        searchFieldRef.current?.contains(target) ?? false
-      const clickedInsideLocationsMenu =
-        locationsMenuRef.current?.contains(target) ?? false
-
-      if (!clickedInsideSearchField) {
-        setIsPredictionOpen(false)
-      }
-
-      if (!clickedInsideLocationsMenu) {
-        locationsMenuRef.current?.removeAttribute("open")
-      }
-    }
-
-    document.addEventListener("pointerdown", handlePointerDown)
-    return () => {
-      document.removeEventListener("pointerdown", handlePointerDown)
-    }
-  }, [])
-
-  const handleSearch = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    const trimmed = searchQuery.trim()
-    if (!trimmed) {
-      setSearchSelection(null)
-      setSearchError(null)
-      setSearchStatus("idle")
-      setLocateError(null)
-      setSearchPredictions([])
-      setIsPredictionOpen(false)
-      return
-    }
-
-    const matchingPrediction = searchPredictions.find(
-      (item) => item.name.toLowerCase() === trimmed.toLowerCase()
-    )
-    if (matchingPrediction) {
-      applySearchSelection(matchingPrediction)
-      return
-    }
-
-    try {
-      setSearchStatus("loading")
-      setSearchError(null)
-      setLocateError(null)
-      const result = await geocodeLocation({
-        query: trimmed,
-      })
-      if (!result) {
-        throw new Error("City or ZIP not found. Check spelling and try again.")
-      }
-      applySearchSelection(result)
-    } catch (error) {
-      setSearchStatus("error")
-      setSearchError(
-        error instanceof Error ? error.message : "Unable to resolve location."
-      )
-    }
-  }
-
-  const handleLocateMe = async () => {
-    setSearchQuery("")
-    setSearchSelection(null)
-    setSearchError(null)
-    setSearchStatus("idle")
-    setSearchPredictions([])
-    setIsPredictionOpen(false)
-    setLocateStatus("loading")
-    setLocateError(null)
-
-    try {
-      const position = await requestGpsLocation()
-      setCoords({
-        lat: position.coords.latitude,
-        lon: position.coords.longitude,
-      })
-      setGpsAccuracy(position.coords.accuracy ?? null)
-      setLocateStatus("idle")
-      setLocationRevision((value) => value + 1)
-    } catch (error) {
-      setGpsAccuracy(null)
-      setLocateStatus("error")
-      if (error && typeof error === "object" && "code" in error) {
-        const geoError = error as GeolocationPositionError
-        if (geoError.code === geoError.PERMISSION_DENIED) {
-          setLocateError(
-            "Location access was denied. Enable GPS permission to use GPS enabled features."
-          )
-          return
-        }
-        if (geoError.code === geoError.POSITION_UNAVAILABLE) {
-          setLocateError("Unable to determine your location. Try again soon.")
-          return
-        }
-        if (geoError.code === geoError.TIMEOUT) {
-          setLocateError("Location request timed out. Please retry.")
-          return
-        }
-      }
-      setLocateError("Unable to retrieve GPS location. Please try again.")
-    }
-  }
-
-  const handleRecentSearchSelect = (selection: LocationSelection) => {
-    applySearchSelection(selection)
-    locationsMenuRef.current?.removeAttribute("open")
-  }
-
-  const handleRemoveRecentSearch = (selection: LocationSelection) => {
-    setRecentSearches((prev) => {
-      const selectionKey = buildRecentSearchKey(selection)
-      const next = prev.filter((item) => buildRecentSearchKey(item) !== selectionKey)
-      if (typeof window !== "undefined") {
-        window.localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(next))
-      }
-      return next
-    })
   }
 
   useEffect(() => {
@@ -3461,7 +3155,7 @@ export function ConditionsTab({
       : null
   const windUnitLabel = unit === "kt" ? "kt" : "mph"
   const locationLabel =
-    searchSelection?.name?.trim() ??
+    activeLocationLabel?.trim() ??
     weather?.current.locationName?.trim() ??
     "Mission Perimeter"
   const parsedLocation = parseLocationLabel(locationLabel)
@@ -3613,7 +3307,6 @@ export function ConditionsTab({
 
   const isMissingApiKey =
     errorMessage?.toLowerCase().includes("missing openweathermap api key") ?? false
-  const isSearching = searchStatus === "loading" || locateStatus === "loading"
   const cautionReasons = flyability?.cautionReasons ?? []
   const dangerReasons = flyability?.dangerReasons ?? []
   const alertMetricByReason: Record<
@@ -3941,154 +3634,10 @@ export function ConditionsTab({
           value: selectedTrendConfig.accessor(entry),
         }))
       : []
-  const renderSearchInTopBar = topBarPortalTarget !== undefined
-  const searchControlsClassName = renderSearchInTopBar
-    ? "flex w-full flex-col gap-3 sm:flex-row sm:items-center"
-    : "flex flex-col gap-3 rounded-3xl border border-slate-800/70 bg-slate-900/60 p-4 sm:flex-row sm:items-center"
-  const predictionDropdownWidth = useMemo(() => {
-    const longestLabelLength = searchPredictions.reduce(
-      (max, item) => Math.max(max, item.name.length),
-      0
-    )
-    return Math.max(220, Math.min(520, longestLabelLength * 8 + 96))
-  }, [searchPredictions])
-  const searchControls = (
-    <form
-      onSubmit={handleSearch}
-      className={searchControlsClassName}
-    >
-      <label className="sr-only" htmlFor="location-search">
-        Search city or ZIP code
-      </label>
-      <div ref={searchFieldRef} className="relative w-full flex-1">
-        <input
-          id="location-search"
-          type="search"
-          autoComplete="off"
-          value={searchQuery}
-          onChange={(event) => {
-            setSearchQuery(event.target.value)
-            setSearchSelection(null)
-            setSearchError(null)
-          }}
-          onFocus={() => {
-            if (searchPredictions.length > 0) {
-              setIsPredictionOpen(true)
-            }
-          }}
-          placeholder="Search city or ZIP"
-          aria-busy={isSearching}
-          className="h-11 w-full rounded-2xl border border-slate-800 bg-slate-950/80 px-4 pr-10 text-sm text-slate-100 placeholder:text-slate-500 focus:border-emerald-400 focus:outline-none focus:ring-2 focus:ring-emerald-400/30"
-        />
-        {(isSearching || isPredictionLoading) && (
-          <Loader2 className="absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-emerald-200" />
-        )}
-        {isPredictionOpen && (
-          <div
-            className="absolute left-0 top-full z-30 mt-2 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/95 shadow-xl"
-            style={{ width: `${predictionDropdownWidth}px`, maxWidth: "100%" }}
-          >
-            {searchPredictions.map((prediction) => (
-              <button
-                key={`${prediction.name}-${prediction.lat}-${prediction.lon}`}
-                type="button"
-                onMouseDown={(event) => {
-                  event.preventDefault()
-                  applySearchSelection(prediction)
-                }}
-                className="flex w-full items-center justify-between gap-3 border-b border-slate-800/80 px-4 py-3 text-left text-sm text-slate-200 transition last:border-b-0 hover:bg-slate-900/80 hover:text-white"
-              >
-                <span className="truncate">{prediction.name}</span>
-                <span className="shrink-0 text-[10px] uppercase tracking-[0.2em] text-slate-500">
-                  Select
-                </span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-        <button
-          type="submit"
-          className="inline-flex h-11 items-center justify-center rounded-2xl border border-emerald-400/40 bg-emerald-400/10 px-4 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-100 transition hover:border-emerald-400 hover:text-white"
-        >
-          {searchStatus === "loading" ? "Locating..." : "Search"}
-        </button>
-        <details ref={locationsMenuRef} className="relative">
-          <summary className="flex h-11 items-center justify-center gap-2 rounded-2xl border border-slate-800 bg-slate-950/70 px-4 text-xs font-semibold uppercase tracking-[0.2em] text-slate-300 transition hover:text-white list-none [&::-webkit-details-marker]:hidden">
-            My Locations
-            <ChevronDown className="h-4 w-4 text-slate-400" />
-          </summary>
-          <div className="absolute right-0 z-20 mt-2 w-64 rounded-2xl border border-slate-800 bg-slate-950/95 p-2 shadow-xl">
-            {useGps && (
-              <button
-                type="button"
-                onClick={() => {
-                  handleLocateMe()
-                  locationsMenuRef.current?.removeAttribute("open")
-                }}
-                className="flex w-full items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-3 py-2 text-left text-xs font-semibold uppercase tracking-[0.2em] text-emerald-100 transition hover:border-emerald-300 hover:text-white"
-              >
-                <LocateFixed className="h-3.5 w-3.5" />
-                <span>Use GPS Location</span>
-              </button>
-            )}
-            {recentSearches.length === 0 && (
-              <div className="px-3 py-2 text-sm text-slate-500">
-                No recent locations.
-              </div>
-            )}
-            {recentSearches.map((location) => (
-              <div
-                key={`${location.name}-${location.lat}-${location.lon}`}
-                className="flex items-center gap-2 rounded-xl transition hover:bg-slate-900/80"
-              >
-                <button
-                  type="button"
-                  onClick={() => handleRecentSearchSelect(location)}
-                  className="min-w-0 flex-1 rounded-xl px-3 py-2 text-left text-sm text-slate-200"
-                >
-                  <span className="block truncate">{location.name}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveRecentSearch(location)}
-                  className="mr-2 inline-flex h-6 w-6 shrink-0 items-center justify-center text-rose-400 transition hover:text-rose-200"
-                  aria-label={`Remove ${location.name} from saved locations`}
-                  title="Remove location"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </details>
-      </div>
-    </form>
-  )
 
   return (
     <section className="space-y-6">
-      {topBarPortalTarget
-        ? createPortal(searchControls, topBarPortalTarget)
-        : topBarPortalTarget === undefined
-          ? searchControls
-          : null}
-
       <div className="space-y-6 rounded-3xl border border-slate-800/70 bg-gradient-to-br from-indigo-950/30 via-slate-900/50 to-slate-950/70 p-6">
-        {searchStatus === "error" && searchError && (
-          <div className="mx-auto w-fit max-w-full rounded-2xl border border-rose-500/40 bg-rose-500/10 p-4 text-center text-sm text-rose-100">
-            {searchError}
-          </div>
-        )}
-        {locateStatus === "error" && locateError && (
-          <div className="flex w-full justify-center px-2">
-            <div className="mx-auto inline-block max-w-full whitespace-nowrap max-[420px]:whitespace-normal rounded-2xl border border-rose-500/40 bg-rose-500/10 p-4 text-center text-sm text-rose-100">
-              {locateError}
-            </div>
-          </div>
-        )}
-
         <header className="rounded-3xl border border-slate-800/70 bg-gradient-to-br from-slate-950/70 via-slate-900/60 to-slate-950/80 p-6 md:py-7">
           <div className="flex flex-col gap-6 md:flex-row md:items-stretch md:gap-8">
             <div className="flex flex-col gap-4 md:flex-1">

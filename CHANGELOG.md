@@ -7,6 +7,30 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.2.7] - 2026-03-04
+
+### Added
+- New NOTAM ingest edge function (`supabase/functions/notam-ingest`) and supporting SQL maintenance scripts/migrations for feed storage, retention, and geometry/owner enrichment fields.
+- New SWIFT NOTAM consumer tool (`tools/notam-swift-consumer`) and standalone FCC owner enrichment tool (`tools/notam-owner-enricher`) with docs and package manifests.
+- Global location controller (`useGlobalLocation`) and reusable top-bar location UI (`GlobalLocationBar`) for shared search/GPS behavior across tabs.
+- Light-mode splash asset support (`src/assets/GIDrone Splash Light Mode.png`) and dedicated location typing (`src/lib/location/types.ts`).
+
+### Changed
+- NOTAM pipeline integration updated end-to-end: ingest payload mapping, edge read response shape, aviation types, NOTAM hooks, and radar/aviation presentation.
+- Conditions, Aviation, and Radar now consume one global location source; GPS/search updates propagate across tabs and clear Radar focus for recentering.
+- Radar tab UI refinements: style controls repositioning, header/layout updates, overlay panel behavior, and map recenter logic when default center changes without explicit map focus.
+- Login and authenticated shell backgrounds now switch by theme (dark vs light splash) with fixed background layers for both modes.
+
+### Fixed
+- GPS/search UX regressions by moving location ownership out of `ConditionsTab` and preserving backward-safe coordinate-driven fetch behavior.
+- Radar timeline slider custom thumb rendering behavior; custom range styles now consistently apply across browsers.
+- NOTAM mapping/display gaps for structure, lighting, geometry, and owner-related metadata in Aviation/Radar flows.
+
+### Ops/Deploy
+- Supabase config and function provider wiring updated to use `notam-ingest` + updated `notam` function pathing.
+- Legacy `supabase/functions/notam/providers/*` provider files removed as ingest/feed-backed NOTAM path became the active implementation.
+- Release versions bumped: root app `0.2.7`, `tools/notam-swift-consumer` `0.1.1`, `tools/notam-owner-enricher` `0.1.1`.
+
 ## [0.2.6] - 2026-03-04
 
 ### Added

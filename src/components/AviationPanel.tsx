@@ -11,6 +11,7 @@ type AviationPanelProps = {
   lat: number
   lon: number
   onMapTfr?: (item: TfrItem) => void
+  onMapNotam?: (item: NotamItem) => void
 }
 
 type MetarListRow = {
@@ -91,6 +92,24 @@ const resolveNotamStartsAt = (item: NotamItem) =>
 
 const resolveNotamEndsAt = (item: NotamItem) =>
   asNonEmptyString(item.endsAt) ?? asNonEmptyString(item.effectiveEnd)
+
+const formatFeetLabel = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? `${Math.round(value)} ft` : null
+
+const resolveLightingLabel = (item: NotamItem) => {
+  const status = asNonEmptyString(item.lightingStatus)
+  if (status) return status
+  if (item.lightingPresent === true) return "Lighted"
+  if (item.lightingPresent === false) return "Unlit"
+  return null
+}
+
+const asFiniteNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value) ? value : null
+
+const isNotamMappable = (item: NotamItem) =>
+  asFiniteNumber(item.mapLat) !== null &&
+  asFiniteNumber(item.mapLon) !== null
 
 const getFlightCategoryLabel = (value: unknown) => {
   if (typeof value !== "string") return null
@@ -191,7 +210,7 @@ function TileErrorState({ message }: { message: string }) {
   )
 }
 
-export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
+export function AviationPanel({ lat, lon, onMapTfr, onMapNotam }: AviationPanelProps) {
   const isDev = import.meta.env.DEV
   const [radiusMiles, setRadiusMiles] = useState<AviationRadiusMiles>(() => readStoredRadiusMiles())
   const [translatedMetars, setTranslatedMetars] = useState<Record<string, boolean>>({})
@@ -428,6 +447,19 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                   const startsAt = resolveNotamStartsAt(item)
                   const endsAt = resolveNotamEndsAt(item)
                   const hasTimeWindow = Boolean(startsAt || endsAt)
+                  const structureType = asNonEmptyString(item.structureType)
+                  const lightingLabel = resolveLightingLabel(item)
+                  const structureHeight = formatFeetLabel(item.structureHeightFt)
+                  const ownerName = asNonEmptyString(item.ownerName)
+                  const structureAsr = asNonEmptyString(item.structureAsr)
+                  const canMap = isNotamMappable(item)
+                  const detailBadges = [
+                    structureType ? `Structure: ${structureType}` : null,
+                    lightingLabel ? `Lighting: ${lightingLabel}` : null,
+                    structureHeight ? `Height: ${structureHeight}` : null,
+                    ownerName ? `Owner: ${ownerName}` : null,
+                    structureAsr ? `ASR ${structureAsr}` : null,
+                  ].filter((value): value is string => Boolean(value))
 
                   return (
                     <div
@@ -441,6 +473,16 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                             {[type, location].filter(Boolean).join(" | ") || "NOTAM"}
                           </p>
                         </div>
+                        {canMap ? (
+                          <button
+                            type="button"
+                            onClick={() => onMapNotam?.(item)}
+                            className="inline-flex items-center gap-1.5 rounded-full border border-cyan-300/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-cyan-100 transition hover:border-cyan-200 hover:text-white"
+                          >
+                            <MapIcon className="h-3 w-3" />
+                            Map
+                          </button>
+                        ) : null}
                       </div>
                       {hasTimeWindow ? (
                         <p className="mt-2 text-xs text-slate-300">
@@ -451,6 +493,18 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                         <p className="mt-2 break-words text-xs leading-relaxed text-slate-200">
                           {description}
                         </p>
+                      ) : null}
+                      {detailBadges.length > 0 ? (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {detailBadges.map((detail) => (
+                            <span
+                              key={detail}
+                              className="rounded-full border border-slate-700/80 bg-slate-900/70 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-300"
+                            >
+                              {detail}
+                            </span>
+                          ))}
+                        </div>
                       ) : null}
                     </div>
                   )
@@ -472,16 +526,16 @@ export function AviationPanel({ lat, lon, onMapTfr }: AviationPanelProps) {
                 </p>
                 {notamProviderError ? (
                   <p className="mt-2 text-xs text-slate-500">
-                    Provider response: {notamProviderError}
+                    Feed response: {notamProviderError}
                   </p>
                 ) : null}
                 <p className="mt-2 text-xs text-slate-500">
-                  Connect a NOTAM provider to enable nearby NOTAM results in this panel.
+                  Connect a SWIFT / SCDS NOTAM ingest pipeline to enable nearby NOTAM results in this panel.
                 </p>
                 {isDev && notams.notConfigured && notams.nextSteps.length > 0 ? (
                   <details className="mt-3 rounded-lg border border-slate-800/70 bg-slate-950/40 p-3">
                     <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                      Provider setup notes
+                      SWIFT setup notes
                     </summary>
                     <ul className="mt-2 space-y-1 text-xs text-slate-300">
                       {notams.nextSteps.map((step) => (

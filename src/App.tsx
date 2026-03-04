@@ -1,4 +1,4 @@
-import React, { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   ChevronDown,
   LogIn,
@@ -22,7 +22,11 @@ import type { TfrMapFocus } from "./lib/aviation/types"
 import { AuthGuard } from "./components/AuthGuard"
 import { AuthSplash } from "./components/AuthSplash"
 import { ConditionsTab } from "./components/ConditionsTab"
+import { GlobalLocationBar } from "./components/GlobalLocationBar"
 import { SettingsModal } from "./components/SettingsModal"
+import { useGlobalLocation } from "./hooks/useGlobalLocation"
+import splashBackgroundDark from "./assets/GIDrone-Splash.jpg"
+import splashBackgroundLight from "./assets/GIDrone Splash Light Mode.png"
 
 const AviationTab = lazy(() =>
   import("./components/AviationTab").then((module) => ({ default: module.AviationTab }))
@@ -130,8 +134,6 @@ function AppShell() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [isProfileMenuOpen, setIsProfileMenuOpen] = useState(false)
   const [mapFocus, setMapFocus] = useState<MapFocus | null>(null)
-  const [aviationCoords, setAviationCoords] = useState(DEFAULT_AVIATION_COORDS)
-  const [topBarSearchHost, setTopBarSearchHost] = useState<HTMLDivElement | null>(null)
   const profileMenuRef = useRef<HTMLDivElement | null>(null)
 
   const [user, setUser] = useState<User | null>(null)
@@ -140,6 +142,16 @@ function AppShell() {
   const [email, setEmail] = useState("")
 
   const redirectTo = typeof window !== "undefined" ? `${window.location.origin}/` : "/"
+  const handleGlobalLocationResolved = useCallback(() => {
+    setMapFocus(null)
+  }, [])
+  const splashBackground = theme === "light" ? splashBackgroundLight : splashBackgroundDark
+  const globalLocation = useGlobalLocation({
+    useGps,
+    defaultCoords: DEFAULT_AVIATION_COORDS,
+    onLocationResolved: handleGlobalLocationResolved,
+  })
+  const { activeCoords, activeGpsAccuracy, activeLocationLabel } = globalLocation
 
   const handleGoogleLogin = async () => {
     try {
@@ -387,20 +399,20 @@ function AppShell() {
       return (
         <ConditionsTab
           unit={unit}
-          useGps={useGps}
           timeFormat={timeFormat}
           theme={theme}
           onTabChange={setActiveTab}
-          onActiveCoordsChange={setAviationCoords}
-          topBarPortalTarget={topBarSearchHost}
+          activeCoords={activeCoords}
+          activeLocationLabel={activeLocationLabel}
+          activeGpsAccuracy={activeGpsAccuracy}
         />
       )
     }
     if (activeTab === "aviation") {
       return (
         <AviationTab
-          lat={aviationCoords.lat}
-          lon={aviationCoords.lon}
+          lat={activeCoords.lat}
+          lon={activeCoords.lon}
           onMapTfr={(item) => {
             if (!item.bbox) return
             setMapFocus({
@@ -410,11 +422,39 @@ function AppShell() {
             })
             setActiveTab("radar")
           }}
+          onMapNotam={(item) => {
+            const mapLat = typeof item.mapLat === "number" ? item.mapLat : null
+            const mapLon = typeof item.mapLon === "number" ? item.mapLon : null
+            if (mapLat === null || mapLon === null) return
+
+            const notamId =
+              (typeof item.notamId === "string" && item.notamId.trim()) ||
+              (typeof item.id === "string" && item.id.trim()) ||
+              "NOTAM"
+
+            const locationLabel =
+              (typeof item.location === "string" && item.location.trim()) ||
+              (typeof item.facility === "string" && item.facility.trim()) ||
+              notamId
+
+            setMapFocus({
+              lat: mapLat,
+              lon: mapLon,
+              name: `${notamId} | ${locationLabel}`,
+            })
+            setActiveTab("radar")
+          }}
         />
       )
     }
     if (activeTab === "radar") {
-      return <RadarTab theme={theme} focusLocation={mapFocus ?? undefined} />
+      return (
+        <RadarTab
+          theme={theme}
+          focusLocation={mapFocus ?? undefined}
+          defaultCenter={activeCoords}
+        />
+      )
     }
 
     return (
@@ -491,7 +531,6 @@ function AppShell() {
   }, [
     activeTab,
     unit,
-    useGps,
     timeFormat,
     theme,
     user,
@@ -500,8 +539,9 @@ function AppShell() {
     loading,
     authError,
     email,
-    aviationCoords,
-    topBarSearchHost,
+    activeCoords,
+    activeGpsAccuracy,
+    activeLocationLabel,
   ])
 
   const tabRowAlignmentClass = TOP_TAB_BAR.alignment === "left" ? "justify-start" : "justify-center"
@@ -534,6 +574,7 @@ function AppShell() {
         onSendMagicLink={handleEmailLogin}
         email={email}
         onEmailChange={setEmail}
+        theme={theme}
         authError={authError}
       />
     )
@@ -542,10 +583,20 @@ function AppShell() {
   return (
     <div className="min-h-screen bg-white text-slate-900 dark:bg-slate-950 dark:text-slate-100">
       <div className="relative min-h-screen overflow-hidden">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,_rgba(226,232,240,0.85),_transparent_65%)] dark:hidden" />
-        <div className="pointer-events-none absolute inset-0 hidden bg-[radial-gradient(circle_at_top,_rgba(15,23,42,0.9),_transparent_60%)] dark:block" />
-        <div className="pointer-events-none absolute -left-32 top-20 h-80 w-80 rounded-full bg-emerald-500/10 blur-[140px] dark:bg-emerald-500/15" />
-        <div className="pointer-events-none absolute bottom-0 right-0 h-72 w-72 rounded-full bg-cyan-500/10 blur-[160px] dark:bg-cyan-500/15" />
+        <img
+          src={splashBackground}
+          alt=""
+          aria-hidden="true"
+          className={`pointer-events-none fixed inset-0 h-screen w-screen ${
+            theme === "light"
+              ? "object-cover object-center opacity-45"
+              : "object-cover opacity-30"
+          }`}
+        />
+        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top,_rgba(226,232,240,0.85),_transparent_65%)] dark:hidden" />
+        <div className="pointer-events-none fixed inset-0 hidden bg-[radial-gradient(circle_at_top,_rgba(15,23,42,0.9),_transparent_60%)] dark:block" />
+        <div className="pointer-events-none fixed -left-32 top-20 h-80 w-80 rounded-full bg-emerald-500/10 blur-[140px] dark:bg-emerald-500/15" />
+        <div className="pointer-events-none fixed bottom-0 right-0 h-72 w-72 rounded-full bg-cyan-500/10 blur-[160px] dark:bg-cyan-500/15" />
 
         <main className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-8 px-4 py-8 sm:gap-10 sm:px-6 sm:py-12">
           <div ref={profileMenuRef} className="absolute right-4 top-4 z-30 sm:right-6 sm:top-6">
@@ -705,7 +756,7 @@ function AppShell() {
                       })}
                     </div>
                   </div>
-                  {activeTab === "conditions" ? <div ref={setTopBarSearchHost} className="mt-2 w-full" /> : null}
+                  <GlobalLocationBar controller={globalLocation} />
                 </div>
               </div>
             </div>

@@ -1,4 +1,6 @@
-import splashBackground from "../assets/GIDrone-Splash.jpg"
+import splashBackgroundDark from "../assets/GIDrone-Splash.jpg"
+import splashBackgroundLight from "../assets/GIDrone Splash Light Mode.png"
+import type { ThemeMode } from "../lib/theme"
 
 const logo = new URL("../assets/GIDrone4.PNG", import.meta.url).href
 
@@ -8,6 +10,7 @@ type AuthSplashProps = {
   onSendMagicLink: () => void
   email: string
   onEmailChange: (value: string) => void
+  theme: ThemeMode
   authError?: string | null
 }
 
@@ -17,19 +20,38 @@ export function AuthSplash({
   onSendMagicLink,
   email,
   onEmailChange,
+  theme,
   authError = null,
 }: AuthSplashProps) {
+  const splashBackground = theme === "light" ? splashBackgroundLight : splashBackgroundDark
+
   return (
     <div className="relative min-h-screen overflow-hidden bg-slate-950 text-white">
       <img
         src={splashBackground}
         alt=""
         aria-hidden="true"
-        className="absolute inset-0 h-full w-full object-cover opacity-60"
+        className={`fixed inset-0 h-screen w-screen ${
+          theme === "light"
+            ? "object-cover object-center opacity-75"
+            : "object-cover opacity-60"
+        }`}
       />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_15%,rgba(14,165,233,0.1),transparent_42%),radial-gradient(circle_at_82%_78%,rgba(59,130,246,0.1),transparent_46%),linear-gradient(160deg,rgba(2,6,23,0.68)_0%,rgba(11,17,32,0.7)_45%,rgba(17,24,39,0.78)_100%)]" />
-      <div className="absolute inset-0 opacity-10 [background-image:linear-gradient(rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.14)_1px,transparent_1px)] [background-size:42px_42px]" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_120%,rgba(56,189,248,0.1),transparent_55%)]" />
+      <div
+        className={`fixed inset-0 ${
+          theme === "light"
+            ? "bg-[radial-gradient(circle_at_20%_15%,rgba(14,165,233,0.12),transparent_42%),radial-gradient(circle_at_82%_78%,rgba(59,130,246,0.08),transparent_46%),linear-gradient(160deg,rgba(241,245,249,0.62)_0%,rgba(226,232,240,0.62)_45%,rgba(203,213,225,0.7)_100%)]"
+            : "bg-[radial-gradient(circle_at_20%_15%,rgba(14,165,233,0.1),transparent_42%),radial-gradient(circle_at_82%_78%,rgba(59,130,246,0.1),transparent_46%),linear-gradient(160deg,rgba(2,6,23,0.68)_0%,rgba(11,17,32,0.7)_45%,rgba(17,24,39,0.78)_100%)]"
+        }`}
+      />
+      <div className="fixed inset-0 opacity-10 [background-image:linear-gradient(rgba(148,163,184,0.14)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.14)_1px,transparent_1px)] [background-size:42px_42px]" />
+      <div
+        className={`fixed inset-0 ${
+          theme === "light"
+            ? "bg-[radial-gradient(circle_at_50%_120%,rgba(37,99,235,0.08),transparent_55%)]"
+            : "bg-[radial-gradient(circle_at_50%_120%,rgba(56,189,248,0.1),transparent_55%)]"
+        }`}
+      />
 
       <header className="absolute left-0 top-0 z-10 p-4 sm:p-8">
         <img

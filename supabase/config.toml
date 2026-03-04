@@ -12,3 +12,6 @@ verify_jwt = false
 
 [functions.notam]
 verify_jwt = false
+
+[functions.notam-ingest]
+verify_jwt = false

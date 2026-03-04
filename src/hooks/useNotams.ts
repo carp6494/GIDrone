@@ -59,7 +59,7 @@ export function useNotams({
           const payloadError =
             payload && typeof payload === "object" && "error" in payload
               ? String((payload as { error: unknown }).error)
-              : "NOTAM provider not configured"
+              : "SWIFT NOTAM ingest not configured"
           const payloadNextSteps =
             payload && typeof payload === "object" && "nextSteps" in payload
               ? (payload as { nextSteps?: unknown }).nextSteps
