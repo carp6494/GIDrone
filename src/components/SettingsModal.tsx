@@ -62,22 +62,22 @@ export function SettingsModal({
             <p className="text-xs uppercase tracking-[0.3em] text-slate-500 dark:text-slate-400">
               Theme
             </p>
-            <div className="mt-3 flex flex-wrap items-center gap-3">
-              {(["system", "dark", "light"] as const).map((mode) => (
-                <button
-                  key={mode}
-                  type="button"
-                  onClick={() => onThemeChange(mode)}
-                  className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
-                    theme === mode
-                      ? "bg-emerald-400 text-slate-950"
-                      : "border border-slate-300 text-slate-700 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:text-white"
-                  }`}
-                >
-                  {mode}
-                </button>
-              ))}
-            </div>
+              <div className="mt-3 flex flex-wrap items-center gap-3">
+                {(["dark", "light"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => onThemeChange(mode)}
+                    className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition ${
+                      theme === mode
+                        ? "bg-emerald-400 text-slate-950"
+                        : "border border-slate-300 text-slate-700 hover:text-slate-900 dark:border-slate-800 dark:text-slate-300 dark:hover:text-white"
+                    }`}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
           </div>
 
           <div className="rounded-2xl border border-slate-200 bg-slate-50/90 p-4 dark:border-slate-800 dark:bg-slate-900/60">

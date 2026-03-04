@@ -2,11 +2,296 @@ import { supabase } from "../lib/supabase"
 
 const NOAA_KP_INDEX_URL =
   "https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json"
+const OPEN_WEATHER_GEO_BASE_URL = "https://api.openweathermap.org/geo/1.0"
+const OPEN_WEATHER_PUBLIC_KEY = String(
+  import.meta.env.VITE_OPENWEATHER_API_KEY ?? import.meta.env.VITE_OPENWEATHER_KEY ?? ""
+)
+const MAPBOX_PUBLIC_KEY = String(
+  import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ?? import.meta.env.VITE_MAPBOX_TOKEN ?? ""
+)
+const ZIPPOTAM_US_URL = "https://api.zippopotam.us/us"
 const SUPABASE_URL = String(import.meta.env.VITE_SUPABASE_URL ?? "")
 const SUPABASE_ANON_KEY = String(import.meta.env.VITE_SUPABASE_ANON_KEY ?? "")
 const AVIATION_PROXY_URL = SUPABASE_URL
   ? `${SUPABASE_URL.replace(/\/$/, "")}/functions/v1/aviation-proxy`
   : ""
+
+const normalizeLocationToken = (value) =>
+  typeof value === "string" ? value.trim().replace(/\s+/g, " ") : ""
+
+const normalizeCountryCode = (value) => {
+  const normalized = normalizeLocationToken(value)
+  if (!normalized) return ""
+
+  const upper = normalized.toUpperCase()
+  if (upper === "UNITED STATES" || upper === "UNITED STATES OF AMERICA" || upper === "USA") {
+    return "US"
+  }
+
+  return upper
+}
+
+const formatLocationLabel = (city, state, country) => {
+  const normalizedCity = normalizeLocationToken(city)
+  const normalizedState = normalizeLocationToken(state)
+  const countryCode = normalizeCountryCode(country)
+  const segments = [normalizedCity]
+
+  if (normalizedState) {
+    segments.push(normalizedState)
+  }
+
+  if (countryCode && countryCode !== "US") {
+    segments.push(countryCode)
+  }
+
+  return segments.filter(Boolean).join(", ")
+}
+
+const reverseGeocodeCoordinates = async (lat, lon) => {
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null
+
+  if (OPEN_WEATHER_PUBLIC_KEY) {
+    const endpoint = new URL(`${OPEN_WEATHER_GEO_BASE_URL}/reverse`)
+    endpoint.searchParams.set("lat", String(lat))
+    endpoint.searchParams.set("lon", String(lon))
+    endpoint.searchParams.set("limit", "1")
+    endpoint.searchParams.set("appid", OPEN_WEATHER_PUBLIC_KEY)
+
+    const response = await fetch(endpoint)
+    if (response.ok) {
+      const payload = await response.json()
+      const match = Array.isArray(payload) ? payload[0] : null
+      const label = formatLocationLabel(match?.name, match?.state, match?.country)
+      if (label) {
+        return {
+          label,
+          country: normalizeCountryCode(match?.country) || null,
+        }
+      }
+    }
+  }
+
+  if (!MAPBOX_PUBLIC_KEY) return null
+
+  const endpoint = new URL(
+    `https://api.mapbox.com/geocoding/v5/mapbox.places/${lon},${lat}.json`
+  )
+  endpoint.searchParams.set("types", "place,locality")
+  endpoint.searchParams.set("limit", "1")
+  endpoint.searchParams.set("access_token", MAPBOX_PUBLIC_KEY)
+
+  const response = await fetch(endpoint)
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      return null
+    }
+    throw new Error("Reverse geocoding unavailable.")
+  }
+
+  const payload = await response.json()
+  const feature = Array.isArray(payload?.features) ? payload.features[0] : null
+  if (!feature) return null
+
+  const context = Array.isArray(feature?.context) ? feature.context : []
+  const region = context.find((entry) => typeof entry?.id === "string" && entry.id.startsWith("region"))
+  const country = context.find(
+    (entry) => typeof entry?.id === "string" && entry.id.startsWith("country")
+  )
+  const label = formatLocationLabel(feature?.text, region?.text, country?.short_code ?? country?.text)
+  if (!label) return null
+
+  return {
+    label,
+    country: normalizeCountryCode(country?.short_code ?? country?.text) || null,
+  }
+}
+
+const normalizeUsZipQuery = (value) => {
+  if (typeof value !== "string") return null
+  const compact = value.replace(/\s+/g, "")
+  const match = compact.match(/^(\d{5})(?:-\d{4})?$/)
+  return match ? match[1] : null
+}
+
+const lookupUsZipCode = async (zip) => {
+  const normalizedZip = normalizeUsZipQuery(zip)
+  if (!normalizedZip) return null
+
+  if (OPEN_WEATHER_PUBLIC_KEY) {
+    const openWeatherUrl = new URL(`${OPEN_WEATHER_GEO_BASE_URL}/zip`)
+    openWeatherUrl.searchParams.set("zip", `${normalizedZip},US`)
+    openWeatherUrl.searchParams.set("appid", OPEN_WEATHER_PUBLIC_KEY)
+
+    const openWeatherResponse = await fetch(openWeatherUrl)
+    if (openWeatherResponse.ok) {
+      const openWeatherPayload = await openWeatherResponse.json()
+        const lat = Number(openWeatherPayload?.lat)
+        const lon = Number(openWeatherPayload?.lon)
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+          return {
+            name: formatLocationLabel(
+              openWeatherPayload?.name,
+              openWeatherPayload?.state,
+              openWeatherPayload?.country
+            ),
+            lat,
+            lon,
+          }
+        }
+    } else if (openWeatherResponse.status !== 404) {
+      throw new Error("ZIP lookup unavailable.")
+    }
+  }
+
+  const response = await fetch(`${ZIPPOTAM_US_URL}/${normalizedZip}`)
+  if (!response.ok) {
+    if (response.status === 404) return null
+    throw new Error("ZIP lookup unavailable.")
+  }
+
+  const payload = await response.json()
+  const place = Array.isArray(payload?.places) ? payload.places[0] : null
+  const lat = Number(place?.latitude)
+  const lon = Number(place?.longitude)
+  if (!place || !Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return null
+  }
+
+  const city = typeof place?.["place name"] === "string" ? place["place name"] : null
+  const state =
+    typeof place?.["state abbreviation"] === "string"
+      ? place["state abbreviation"]
+      : typeof place?.state === "string"
+        ? place.state
+        : null
+  const country =
+    typeof payload?.["country abbreviation"] === "string"
+      ? payload["country abbreviation"]
+      : typeof payload?.country === "string"
+        ? payload.country
+        : "US"
+
+  return {
+    name: formatLocationLabel(city, state, country),
+    lat,
+    lon,
+  }
+}
+
+const normalizeGeocodeMatches = (data) => {
+  if (!Array.isArray(data)) return []
+
+  return data
+    .map((match) => {
+      const lat = Number(match?.lat)
+      const lon = Number(match?.lon)
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+          return null
+        }
+      return {
+        name: formatLocationLabel(match?.name, match?.state, match?.country),
+        lat,
+        lon,
+      }
+    })
+    .filter(Boolean)
+}
+
+const normalizeMapboxMatches = (data) => {
+  if (!Array.isArray(data)) return []
+
+  return data
+    .map((feature) => {
+      const [lon, lat] = Array.isArray(feature?.center) ? feature.center : []
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return null
+      }
+
+      const placeName =
+        typeof feature?.place_name === "string"
+          ? feature.place_name
+          : typeof feature?.text === "string"
+            ? feature.text
+            : ""
+
+      if (!placeName) return null
+
+      const placeParts = placeName
+        .split(",")
+        .map((part) => normalizeLocationToken(part))
+        .filter(Boolean)
+      const city = placeParts[0] ?? ""
+      const state = placeParts.length > 2 ? placeParts[placeParts.length - 2] : null
+      const country = placeParts.length > 1 ? placeParts[placeParts.length - 1] : null
+
+      return {
+        name: formatLocationLabel(city, state, country),
+        lat,
+        lon,
+      }
+    })
+    .filter(Boolean)
+}
+
+const rankLocationPredictions = (entries, query) => {
+  if (!Array.isArray(entries) || !entries.length) return []
+
+  const normalizedQuery = String(query ?? "").trim().toLowerCase()
+  const tokens = normalizedQuery.split(/\s+/).filter(Boolean)
+
+  return [...entries]
+    .map((entry, index) => {
+      const label = String(entry?.name ?? "").toLowerCase()
+      let score = 0
+
+      if (label === normalizedQuery) score += 300
+      if (label.startsWith(normalizedQuery)) score += 220
+      if (label.includes(normalizedQuery)) score += 90
+
+      for (const token of tokens) {
+        if (!token) continue
+        if (label.startsWith(token)) score += 35
+        if (label.includes(` ${token}`)) score += 28
+        if (label.includes(token)) score += 14
+      }
+
+      if (tokens.length > 1 && tokens.every((token) => label.includes(token))) {
+        score += 120
+      }
+
+      return { entry, index, score }
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score
+      return a.index - b.index
+    })
+    .map((item) => item.entry)
+}
+
+const lookupMapboxLocations = async (query, limit = 5) => {
+  if (!MAPBOX_PUBLIC_KEY) return []
+
+  const endpoint = new URL(
+    `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(query)}.json`
+  )
+  endpoint.searchParams.set("autocomplete", "true")
+  endpoint.searchParams.set("country", "US")
+  endpoint.searchParams.set("types", "place,postcode,locality")
+  endpoint.searchParams.set("limit", String(Math.max(1, Math.min(limit, 10))))
+  endpoint.searchParams.set("access_token", MAPBOX_PUBLIC_KEY)
+
+  const response = await fetch(endpoint)
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      return []
+    }
+    throw new Error("Location lookup unavailable.")
+  }
+
+  const payload = await response.json()
+  return normalizeMapboxMatches(payload?.features)
+}
 
 const extractUvAndPop = (payload) => {
   if (!payload || typeof payload !== "object") {
@@ -404,8 +689,17 @@ export const fetchCurrentWeather = async ({
 
   lastWeatherFetch = Date.now()
 
+  const resolvedLocation = await reverseGeocodeCoordinates(lat, lon).catch(() => null)
+  const resolvedName = resolvedLocation?.label || weatherData?.name
+  const resolvedCountry = resolvedLocation?.country || weatherData?.sys?.country || null
+
   return {
     ...weatherData,
+    name: resolvedName,
+    sys:
+      weatherData?.sys && typeof weatherData.sys === "object"
+        ? { ...weatherData.sys, country: resolvedCountry }
+        : { country: resolvedCountry },
     uvi,
     pop,
     precipitation,
@@ -417,34 +711,39 @@ export const fetchCurrentWeather = async ({
   }
 }
 
-export const geocodeLocation = async ({
+export const geocodeLocations = async ({
   query,
-  limit = 1,
+  limit = 5,
   country = "US",
 } = {}) => {
   if (!query) {
     throw new Error("Location query is required.")
   }
 
+  const trimmedQuery = query.trim()
+  const zipResult = await lookupUsZipCode(trimmedQuery).catch(() => null)
+  if (zipResult) {
+    return [zipResult]
+  }
+
+  const mapboxMatches = await lookupMapboxLocations(trimmedQuery, limit).catch(() => [])
+  if (mapboxMatches.length > 0) {
+    return rankLocationPredictions(mapboxMatches, trimmedQuery).slice(0, limit)
+  }
+
   const data = await invokeAviationProxy({
     provider: "geocode",
-    query,
+    query: trimmedQuery,
     limit,
     country,
   })
 
-  if (!Array.isArray(data) || data.length === 0) {
-    return null
-  }
+  return rankLocationPredictions(normalizeGeocodeMatches(data), trimmedQuery).slice(0, limit)
+}
 
-  const match = data[0]
-  const nameParts = [match.name, match.state, match.country].filter(Boolean)
-
-  return {
-    name: nameParts.join(", "),
-    lat: match.lat,
-    lon: match.lon,
-  }
+export const geocodeLocation = async (options = {}) => {
+  const matches = await geocodeLocations({ ...options, limit: options.limit ?? 1 })
+  return matches[0] ?? null
 }
 
 export const fetchLocationByQuery = async (options = {}) => geocodeLocation(options)

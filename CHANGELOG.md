@@ -7,6 +7,25 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.2.6] - 2026-03-04
+
+### Added
+- Supabase migration for `public.sites` with indexes and row-level security policies.
+- ZIP-aware search handling support in the frontend and edge function flow.
+
+### Changed
+- Reworked the top navigation/search layout so Conditions search lives in the shared top bar container and the selected top tab persists on refresh.
+- Removed the in-app `Tab Bar` settings UI and consolidated tab presentation into code-defined styling.
+- Refined the Conditions page weather tiles, forecast header, descriptors, spacing, and icon layout for improved readability across light and dark themes.
+- Improved radar behavior in both the Conditions radar snapshot and the main Radar tab, including smoother playback and theme-aware map styling.
+- Switched theme handling to explicit app-controlled `light` / `dark` behavior and hardened global UI styling for controls and scrollbars.
+
+### Fixed
+- ZIP code search resolution and prediction behavior.
+- U.S. location label formatting, including Current Conditions state naming.
+- Aviation edge function ZIP geocoding and CORS handling for allowed origins.
+- `Sites` data availability issue by adding the missing table migration.
+
 ## [0.2.5] - 2026-02-26
 
 ### Added

@@ -18,6 +18,12 @@ export function geocodeLocation(options: {
   limit?: number
   country?: string
 }): Promise<LocationSearchResult | null>
+export function geocodeLocations(options: {
+  query: string
+  apiKey?: string
+  limit?: number
+  country?: string
+}): Promise<LocationSearchResult[]>
 export function fetchLocationByQuery(options: {
   query: string
   apiKey?: string

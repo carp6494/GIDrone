@@ -1,11 +1,11 @@
-export type ThemeMode = "system" | "light" | "dark"
+export type ThemeMode = "light" | "dark"
 
 const STORAGE_KEY = "gi-drone:theme"
 
 export function getStoredTheme(): ThemeMode {
-  if (typeof window === "undefined") return "system"
+  if (typeof window === "undefined") return "dark"
   const v = window.localStorage.getItem(STORAGE_KEY)
-  return v === "light" || v === "dark" || v === "system" ? v : "system"
+  return v === "light" || v === "dark" ? v : "dark"
 }
 
 export function storeTheme(mode: ThemeMode) {
@@ -17,8 +17,9 @@ export function applyTheme(mode: ThemeMode) {
   if (typeof window === "undefined") return
 
   const root = document.documentElement
-  const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches ?? false
-  const isDark = mode === "dark" || (mode === "system" && prefersDark)
+  const isDark = mode === "dark"
 
   root.classList.toggle("dark", isDark)
+  root.dataset.theme = isDark ? "dark" : "light"
+  root.style.colorScheme = isDark ? "dark" : "light"
 }

@@ -5,6 +5,7 @@ import { Layers, Loader2, MapPin, Radar, Satellite, Target } from "lucide-react"
 
 import { useTfrs } from "../hooks/useTfrs"
 import type { BoundsTuple, TfrFeatureProperties } from "../lib/aviation/types"
+import type { ThemeMode } from "../lib/theme"
 
 type BaseStyleKey = "streets" | "satellite" | "hybrid"
 
@@ -29,6 +30,7 @@ type RadarFocusBounds = {
 type RadarFocusLocation = RadarFocusPoint | RadarFocusBounds
 
 type RadarTabProps = {
+  theme: ThemeMode
   focusLocation?: RadarFocusLocation
 }
 
@@ -51,12 +53,44 @@ const FLIGHT_SITES: SiteLocation[] = [
   { name: "River Bend", lat: 29.81, lon: -95.42 },
 ]
 
-const WEATHER_SOURCE_ID = "weather-radar"
-const WEATHER_LAYER_ID = "weather-radar-layer"
 const TFR_SOURCE_ID = "tfr-zones"
 const TFR_FILL_LAYER_ID = "tfr-zones-fill"
 const TFR_LINE_LAYER_ID = "tfr-zones-line"
-const OPEN_WEATHER_TILE_LAYER = "precipitation_new"
+const WEATHER_SOURCE_IDS = ["weather-radar-a", "weather-radar-b"] as const
+const WEATHER_LAYER_IDS = ["weather-radar-layer-a", "weather-radar-layer-b"] as const
+const WEATHER_LAYER_OPACITY = 0.6
+const RADAR_INTERPOLATION_STEPS = 4
+const RADAR_INTERPOLATION_STEP_MS = 180
+const RADAR_MAX_FRAMES = 36
+const RAIN_VIEWER_INDEX_URL = "https://api.rainviewer.com/public/weather-maps.json"
+const RAIN_VIEWER_DEFAULT_HOST = "https://tilecache.rainviewer.com"
+const THEMED_STREET_STYLES: Record<ThemeMode, string> = {
+  light: "mapbox://styles/mapbox/streets-v12",
+  dark: "mapbox://styles/mapbox/dark-v11",
+}
+
+const resolveBaseStyle = (baseStyle: BaseStyleKey, theme: ThemeMode) =>
+  baseStyle === "streets" ? THEMED_STREET_STYLES[theme] : BASE_STYLES[baseStyle].style
+
+type RainViewerFrame = {
+  host: string
+  path: string
+  time: number
+}
+
+type RainViewerResponse = {
+  host?: unknown
+  radar?: {
+    past?: Array<{
+      path?: unknown
+      time?: unknown
+    }>
+    nowcast?: Array<{
+      path?: unknown
+      time?: unknown
+    }>
+  }
+}
 
 const createMarkerElement = () => {
   const element = document.createElement("div")
@@ -130,27 +164,65 @@ const buildTfrPopupHtml = (properties: Partial<TfrFeatureProperties>) => {
   `
 }
 
-const ensureWeatherLayer = (map: mapboxgl.Map, apiKey?: string) => {
-  if (!apiKey) return
-  if (!map.getSource(WEATHER_SOURCE_ID)) {
-    map.addSource(WEATHER_SOURCE_ID, {
-      type: "raster",
-      tiles: [
-        `https://tile.openweathermap.org/map/${OPEN_WEATHER_TILE_LAYER}/{z}/{x}/{y}.png?appid=${apiKey}`,
-      ],
-      tileSize: 256,
-    })
+const buildRadarTileTemplate = (frame: RainViewerFrame) =>
+  `${frame.host}${frame.path}/256/{z}/{x}/{y}/6/1_1.png`
+
+const removeWeatherSlot = (map: mapboxgl.Map, slot: 0 | 1) => {
+  const layerId = WEATHER_LAYER_IDS[slot]
+  const sourceId = WEATHER_SOURCE_IDS[slot]
+  if (map.getLayer(layerId)) {
+    map.removeLayer(layerId)
   }
-  if (!map.getLayer(WEATHER_LAYER_ID)) {
-    map.addLayer({
-      id: WEATHER_LAYER_ID,
-      type: "raster",
-      source: WEATHER_SOURCE_ID,
-      paint: {
-        "raster-opacity": 0.6,
-      },
-    })
+  if (map.getSource(sourceId)) {
+    map.removeSource(sourceId)
   }
+}
+
+const mountWeatherSlot = (
+  map: mapboxgl.Map,
+  slot: 0 | 1,
+  frame: RainViewerFrame,
+  opacity: number,
+  isVisible: boolean
+) => {
+  const layerId = WEATHER_LAYER_IDS[slot]
+  const sourceId = WEATHER_SOURCE_IDS[slot]
+  removeWeatherSlot(map, slot)
+
+  map.addSource(sourceId, {
+    type: "raster",
+    tiles: [buildRadarTileTemplate(frame)],
+    tileSize: 256,
+  })
+  map.addLayer({
+    id: layerId,
+    type: "raster",
+    source: sourceId,
+    layout: {
+      visibility: isVisible ? "visible" : "none",
+    },
+    paint: {
+      "raster-opacity": opacity,
+      "raster-opacity-transition": { duration: 0, delay: 0 },
+    },
+  })
+}
+
+const setWeatherLayerOpacity = (map: mapboxgl.Map, slot: 0 | 1, opacity: number) => {
+  const layerId = WEATHER_LAYER_IDS[slot]
+  if (!map.getLayer(layerId)) return
+  map.setPaintProperty(
+    layerId,
+    "raster-opacity",
+    Math.max(0, Math.min(opacity, WEATHER_LAYER_OPACITY))
+  )
+}
+
+const setWeatherLayerVisibility = (map: mapboxgl.Map, isVisible: boolean) => {
+  WEATHER_LAYER_IDS.forEach((layerId) => {
+    if (!map.getLayer(layerId)) return
+    map.setLayoutProperty(layerId, "visibility", isVisible ? "visible" : "none")
+  })
 }
 
 const ensureTfrLayer = (
@@ -275,26 +347,29 @@ const applyFocusLocation = (
   }
 }
 
-export function RadarTab({ focusLocation }: RadarTabProps) {
+export function RadarTab({ theme, focusLocation }: RadarTabProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const markersRef = useRef<mapboxgl.Marker[]>([])
   const focusMarkerRef = useRef<mapboxgl.Marker | null>(null)
   const tfrPopupRef = useRef<mapboxgl.Popup | null>(null)
+  const weatherAnimationIntervalRef = useRef<number | null>(null)
+  const weatherActiveSlotRef = useRef<0 | 1>(0)
+  const weatherCurrentFrameIndexRef = useRef(0)
+  const weatherInterpolationStepRef = useRef(0)
+  const weatherFramesSignatureRef = useRef("")
   const didRunInitialStyleEffectRef = useRef(false)
   const tfrInteractionsBoundRef = useRef(false)
   const [baseStyle, setBaseStyle] = useState<BaseStyleKey>("streets")
   const [showWeather, setShowWeather] = useState(true)
   const [showTfr, setShowTfr] = useState(true)
   const [showSites, setShowSites] = useState(true)
+  const [radarFrames, setRadarFrames] = useState<RainViewerFrame[]>([])
+  const [radarStatus, setRadarStatus] = useState<"loading" | "ready" | "error">("loading")
 
   const mapboxToken = (
     (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ??
       import.meta.env.VITE_MAPBOX_TOKEN) as string | undefined
-  )?.trim()
-  const weatherApiKey = (
-    (import.meta.env.VITE_OPENWEATHER_API_KEY ??
-      import.meta.env.VITE_OPENWEATHER_KEY) as string | undefined
   )?.trim()
   const missingToken = !mapboxToken
 
@@ -321,6 +396,18 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
   const tfrGeoJson = tfrs.data?.featureCollection ?? EMPTY_TFR_DATA
   const hasTfrFeatures = tfrGeoJson.features.length > 0
   const nearbyTfrCount = tfrs.data?.items.length ?? 0
+  const smoothFrameCount =
+    radarFrames.length > 1 ? radarFrames.length * (RADAR_INTERPOLATION_STEPS + 1) : radarFrames.length
+  const radarLoopSeconds =
+    radarFrames.length > 1
+      ? Math.max(
+          1,
+          Math.round(
+            (radarFrames.length * (RADAR_INTERPOLATION_STEPS + 1) * RADAR_INTERPOLATION_STEP_MS) /
+              1000
+          )
+        )
+      : 0
 
   const baseStyleOptions = useMemo(
     () =>
@@ -330,11 +417,156 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       })),
     []
   )
+  const resolvedBaseStyle = useMemo(() => resolveBaseStyle(baseStyle, theme), [baseStyle, theme])
+
+  useEffect(() => {
+    let cancelled = false
+
+    const loadRadarFrames = async () => {
+      try {
+        const response = await fetch(RAIN_VIEWER_INDEX_URL)
+        if (!response.ok) {
+          throw new Error("Radar feed unavailable")
+        }
+        const payload = (await response.json()) as RainViewerResponse
+        const host =
+          typeof payload.host === "string" && payload.host.trim().length > 0
+            ? payload.host.replace(/\/+$/, "")
+            : RAIN_VIEWER_DEFAULT_HOST
+        const pastFrames = Array.isArray(payload.radar?.past) ? payload.radar.past : []
+        const nowcastFrames = Array.isArray(payload.radar?.nowcast) ? payload.radar.nowcast : []
+        const mergedFrames = [...pastFrames, ...nowcastFrames]
+          .map((item) => ({
+            host,
+            path: typeof item.path === "string" ? item.path : "",
+            time: typeof item.time === "number" ? item.time : Number.NaN,
+          }))
+          .filter((item) => item.path.length > 0 && Number.isFinite(item.time))
+          .sort((a, b) => a.time - b.time)
+
+        const dedupedFrames: RainViewerFrame[] = []
+        const seen = new Set<string>()
+        for (const frame of mergedFrames) {
+          const key = `${frame.time}:${frame.path}`
+          if (seen.has(key)) continue
+          seen.add(key)
+          dedupedFrames.push(frame)
+        }
+
+        const nextFrames = dedupedFrames.slice(-RADAR_MAX_FRAMES)
+        if (!nextFrames.length) {
+          throw new Error("No radar frames")
+        }
+
+        if (cancelled) return
+        setRadarFrames(nextFrames)
+        setRadarStatus("ready")
+      } catch {
+        if (cancelled) return
+        setRadarStatus("error")
+      }
+    }
+
+    void loadRadarFrames()
+    const refreshInterval = window.setInterval(() => {
+      void loadRadarFrames()
+    }, 5 * 60 * 1000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(refreshInterval)
+    }
+  }, [])
 
   const setLayerVisibility = (layerId: string, isVisible: boolean) => {
     const map = mapRef.current
     if (!map || !map.isStyleLoaded() || !map.getLayer(layerId)) return
     map.setLayoutProperty(layerId, "visibility", isVisible ? "visible" : "none")
+  }
+
+  const stopWeatherAnimation = () => {
+    if (weatherAnimationIntervalRef.current !== null) {
+      window.clearInterval(weatherAnimationIntervalRef.current)
+      weatherAnimationIntervalRef.current = null
+    }
+  }
+
+  const syncWeatherOverlay = () => {
+    const map = mapRef.current
+    if (!map) return
+    if (!map.isStyleLoaded()) {
+      map.once("style.load", () => {
+        syncWeatherOverlay()
+      })
+      return
+    }
+
+    const frames = radarFrames
+    if (!frames.length) {
+      stopWeatherAnimation()
+      removeWeatherSlot(map, 0)
+      removeWeatherSlot(map, 1)
+      return
+    }
+
+    const signature = `${frames.length}:${frames[0]?.path ?? ""}:${frames[frames.length - 1]?.path ?? ""}`
+    const shouldResetSlots =
+      weatherFramesSignatureRef.current !== signature ||
+      !map.getLayer(WEATHER_LAYER_IDS[0]) ||
+      !map.getLayer(WEATHER_LAYER_IDS[1])
+
+    if (shouldResetSlots) {
+      weatherFramesSignatureRef.current = signature
+      stopWeatherAnimation()
+      weatherInterpolationStepRef.current = 0
+      weatherActiveSlotRef.current = 0
+      weatherCurrentFrameIndexRef.current = Math.max(0, frames.length - 2)
+      const currentIndex = weatherCurrentFrameIndexRef.current
+      const nextIndex = (currentIndex + 1) % frames.length
+      mountWeatherSlot(map, 0, frames[currentIndex], WEATHER_LAYER_OPACITY, showWeather)
+      mountWeatherSlot(map, 1, frames[nextIndex], 0, showWeather)
+    } else {
+      setWeatherLayerVisibility(map, showWeather)
+    }
+
+    if (!showWeather || frames.length < 2) {
+      stopWeatherAnimation()
+      return
+    }
+
+    if (weatherAnimationIntervalRef.current !== null) return
+
+    weatherAnimationIntervalRef.current = window.setInterval(() => {
+      const liveMap = mapRef.current
+      if (!liveMap || !liveMap.isStyleLoaded()) return
+      if (!liveMap.getLayer(WEATHER_LAYER_IDS[0]) || !liveMap.getLayer(WEATHER_LAYER_IDS[1])) return
+      if (!showWeather) return
+
+      const totalSteps = RADAR_INTERPOLATION_STEPS + 1
+      const activeSlot = weatherActiveSlotRef.current
+      const passiveSlot: 0 | 1 = activeSlot === 0 ? 1 : 0
+      const nextStep = weatherInterpolationStepRef.current + 1
+      const progress = nextStep / totalSteps
+
+      setWeatherLayerOpacity(liveMap, activeSlot, WEATHER_LAYER_OPACITY * (1 - progress))
+      setWeatherLayerOpacity(liveMap, passiveSlot, WEATHER_LAYER_OPACITY * progress)
+
+      if (nextStep >= totalSteps) {
+        const nextCurrentIndex = (weatherCurrentFrameIndexRef.current + 1) % frames.length
+        weatherCurrentFrameIndexRef.current = nextCurrentIndex
+        weatherInterpolationStepRef.current = 0
+        weatherActiveSlotRef.current = passiveSlot
+
+        const preloadSlot: 0 | 1 = passiveSlot === 0 ? 1 : 0
+        const upcomingIndex = (nextCurrentIndex + 1) % frames.length
+        mountWeatherSlot(liveMap, preloadSlot, frames[upcomingIndex], 0, showWeather)
+        setWeatherLayerOpacity(liveMap, passiveSlot, WEATHER_LAYER_OPACITY)
+        setWeatherLayerOpacity(liveMap, preloadSlot, 0)
+        return
+      }
+
+      weatherInterpolationStepRef.current = nextStep
+    }, RADAR_INTERPOLATION_STEP_MS)
   }
 
   const syncOverlays = () => {
@@ -346,10 +578,9 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       })
       return
     }
-    ensureWeatherLayer(map, weatherApiKey)
     ensureTfrLayer(map, tfrGeoJson)
     bindTfrInteractions(map, tfrPopupRef, tfrInteractionsBoundRef)
-    setLayerVisibility(WEATHER_LAYER_ID, showWeather && !!weatherApiKey)
+    syncWeatherOverlay()
     setLayerVisibility(TFR_FILL_LAYER_ID, showTfr)
     setLayerVisibility(TFR_LINE_LAYER_ID, showTfr)
   }
@@ -378,7 +609,7 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
     mapboxgl.accessToken = mapboxToken
     const map = new mapboxgl.Map({
       container: mapContainerRef.current,
-      style: BASE_STYLES[baseStyle].style,
+      style: resolvedBaseStyle,
       center: DEFAULT_CENTER,
       zoom: 9.2,
       pitch: 30,
@@ -404,14 +635,16 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
     })
 
     return () => {
+      stopWeatherAnimation()
       tfrPopupRef.current?.remove()
       map.remove()
       mapRef.current = null
       focusMarkerRef.current = null
       didRunInitialStyleEffectRef.current = false
       tfrInteractionsBoundRef.current = false
+      weatherFramesSignatureRef.current = ""
     }
-  }, [missingToken, mapboxToken])
+  }, [missingToken, mapboxToken, resolvedBaseStyle])
 
   useEffect(() => {
     const map = mapRef.current
@@ -420,18 +653,19 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
       didRunInitialStyleEffectRef.current = true
       return
     }
+    stopWeatherAnimation()
     tfrPopupRef.current?.remove()
     tfrInteractionsBoundRef.current = false
     map.once("style.load", () => {
       syncOverlays()
       syncMarkers()
     })
-    map.setStyle(BASE_STYLES[baseStyle].style)
-  }, [baseStyle])
+    map.setStyle(resolvedBaseStyle)
+  }, [resolvedBaseStyle])
 
   useEffect(() => {
     syncOverlays()
-  }, [showWeather, showTfr, weatherApiKey, tfrGeoJson])
+  }, [showWeather, showTfr, radarFrames, tfrGeoJson])
 
   useEffect(() => {
     syncMarkers()
@@ -481,83 +715,95 @@ export function RadarTab({ focusLocation }: RadarTabProps) {
         />
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
+      </div>
 
-        <div className="absolute inset-x-2 bottom-2 max-h-[45svh] overflow-y-auto rounded-2xl border border-slate-800/70 bg-slate-950/80 p-3 backdrop-blur sm:inset-x-4 sm:bottom-4 sm:max-h-[40svh] sm:rounded-3xl sm:p-4">
-          <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
-            <span className="flex items-center gap-2">
-              <Layers className="h-4 w-4" />
-              Overlays
+      <div className="mt-3 max-h-[45svh] overflow-y-auto rounded-2xl border border-slate-800/70 bg-slate-950/80 p-3 backdrop-blur sm:max-h-[40svh] sm:rounded-3xl sm:p-4">
+        <div className="flex flex-wrap items-center gap-2 text-xs uppercase tracking-[0.3em] text-slate-400">
+          <span className="flex items-center gap-2">
+            <Layers className="h-4 w-4" />
+            Overlays
+          </span>
+          <button
+            type="button"
+            onClick={() => setShowWeather((prev) => !prev)}
+            className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
+              showWeather
+                ? "border-emerald-400/70 bg-emerald-400/15 text-emerald-200"
+                : "border-slate-800 text-slate-400 hover:text-white"
+            }`}
+          >
+            <Radar className="mr-2 inline h-3 w-3" />
+            Weather Radar
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowTfr((prev) => !prev)}
+            className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
+              showTfr
+                ? "border-amber-300/70 bg-amber-400/15 text-amber-100"
+                : "border-slate-800 text-slate-400 hover:text-white"
+            }`}
+          >
+            <Target className="mr-2 inline h-3 w-3" />
+            TFR
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowSites((prev) => !prev)}
+            className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
+              showSites
+                ? "border-sky-400/70 bg-sky-500/15 text-sky-200"
+                : "border-slate-800 text-slate-400 hover:text-white"
+            }`}
+          >
+            <MapPin className="mr-2 inline h-3 w-3" />
+            My Sites
+          </button>
+        </div>
+
+        <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3 text-xs text-slate-300">
+          <div className="flex items-center gap-2 rounded-full border border-slate-800/70 bg-slate-900/60 px-3 py-1">
+            <Satellite className="h-4 w-4 text-slate-400" />
+            <span>Geolocate + Zoom controls active</span>
+          </div>
+          {tfrs.isLoading || tfrs.isRefreshing ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-400/10 px-3 py-1 text-amber-100">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading nearby TFRs...
             </span>
-            <button
-              type="button"
-              onClick={() => setShowWeather((prev) => !prev)}
-              className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
-                showWeather
-                  ? "border-emerald-400/70 bg-emerald-400/15 text-emerald-200"
-                  : "border-slate-800 text-slate-400 hover:text-white"
-              }`}
-            >
-              <Radar className="mr-2 inline h-3 w-3" />
-              Weather Radar
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowTfr((prev) => !prev)}
-              className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
-                showTfr
-                  ? "border-amber-300/70 bg-amber-400/15 text-amber-100"
-                  : "border-slate-800 text-slate-400 hover:text-white"
-              }`}
-            >
-              <Target className="mr-2 inline h-3 w-3" />
-              TFR
-            </button>
-            <button
-              type="button"
-              onClick={() => setShowSites((prev) => !prev)}
-              className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
-                showSites
-                  ? "border-sky-400/70 bg-sky-500/15 text-sky-200"
-                  : "border-slate-800 text-slate-400 hover:text-white"
-              }`}
-            >
-              <MapPin className="mr-2 inline h-3 w-3" />
-              My Sites
-            </button>
-          </div>
-
-          <div className="mt-3 flex min-w-0 flex-wrap items-center gap-3 text-xs text-slate-300">
-            <div className="flex items-center gap-2 rounded-full border border-slate-800/70 bg-slate-900/60 px-3 py-1">
-              <Satellite className="h-4 w-4 text-slate-400" />
-              <span>Geolocate + Zoom controls active</span>
-            </div>
-            {tfrs.isLoading || tfrs.isRefreshing ? (
-              <span className="inline-flex items-center gap-2 rounded-full border border-amber-300/40 bg-amber-400/10 px-3 py-1 text-amber-100">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading nearby TFRs...
-              </span>
-            ) : (
-              <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-amber-100">
-                {nearbyTfrCount} nearby TFR{nearbyTfrCount === 1 ? "" : "s"}
-                {!hasTfrFeatures ? " (no geometry in range)" : ""}
-              </span>
-            )}
-            {tfrs.error ? (
-              <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
-                {tfrs.error}
-              </span>
-            ) : null}
-            {missingToken && (
-              <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-200">
-                Add VITE_MAPBOX_ACCESS_TOKEN to view the map.
-              </span>
-            )}
-            {!weatherApiKey && (
-              <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-200">
-                Add VITE_OPENWEATHER_API_KEY for radar tiles.
-              </span>
-            )}
-          </div>
+          ) : (
+            <span className="rounded-full border border-amber-300/30 bg-amber-400/10 px-3 py-1 text-amber-100">
+              {nearbyTfrCount} nearby TFR{nearbyTfrCount === 1 ? "" : "s"}
+              {!hasTfrFeatures ? " (no geometry in range)" : ""}
+            </span>
+          )}
+          {tfrs.error ? (
+            <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
+              {tfrs.error}
+            </span>
+          ) : null}
+          {missingToken && (
+            <span className="rounded-full border border-amber-400/40 bg-amber-500/10 px-3 py-1 text-amber-200">
+              Add VITE_MAPBOX_ACCESS_TOKEN to view the map.
+            </span>
+          )}
+          {radarStatus === "loading" && (
+            <span className="inline-flex items-center gap-2 rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1 text-emerald-100">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading radar frames...
+            </span>
+          )}
+          {radarStatus === "ready" && radarFrames.length > 0 && (
+            <span className="rounded-full border border-emerald-300/40 bg-emerald-400/10 px-3 py-1 text-emerald-100">
+              {radarFrames.length} source frame{radarFrames.length === 1 ? "" : "s"} +{" "}
+              {smoothFrameCount} smooth steps {radarLoopSeconds > 0 ? `(${radarLoopSeconds}s loop)` : ""}
+            </span>
+          )}
+          {radarStatus === "error" && (
+            <span className="rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
+              Radar animation feed unavailable.
+            </span>
+          )}
         </div>
       </div>
     </section>

@@ -77,6 +77,12 @@ const isValidLatLon = (lat: number, lon: number) =>
 const isValidUnits = (units: string) =>
   units === "standard" || units === "metric" || units === "imperial"
 
+const normalizeUsZipQuery = (value: string) => {
+  const compact = value.replace(/\s+/g, "")
+  const match = compact.match(/^(\d{5})(?:-\d{4})?$/)
+  return match ? match[1] : null
+}
+
 const redactUrl = (url: URL) => {
   const safeUrl = new URL(url.toString())
   if (safeUrl.searchParams.has("appid")) {
@@ -186,6 +192,27 @@ Deno.serve(async (request) => {
         return jsonResponse(request, { error: "limit must be an integer between 1 and 5." }, 400)
       }
       const country = typeof payload?.country === "string" ? payload.country : ""
+      const normalizedCountry = country.trim().toUpperCase() || "US"
+      const zipQuery = normalizeUsZipQuery(query)
+
+      if (zipQuery) {
+        const geoUrl = new URL(`${openWeatherGeoBaseUrl}/zip`)
+        geoUrl.searchParams.set("zip", `${zipQuery},${normalizedCountry}`)
+        geoUrl.searchParams.set("appid", apiKey)
+
+        const response = await withTimeout(geoUrl)
+        if (!response.ok) {
+          const message = await response.text()
+          return textResponse(request, message || "Upstream error.", response.status)
+        }
+
+        const data = await response.json()
+        return jsonResponse(
+          request,
+          data && typeof data === "object" ? [data] : [],
+          200
+        )
+      }
 
       const geoUrl = new URL(`${openWeatherGeoBaseUrl}/direct`)
       geoUrl.searchParams.set("q", country ? `${query},${country}` : query)
