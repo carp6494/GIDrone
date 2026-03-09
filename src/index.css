@@ -1,5 +1,17 @@
 @import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&display=swap");
 
+/* Site popup — remove Mapbox's white card, let our inner div be the card */
+.site-popup .mapboxgl-popup-content {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.site-popup .mapboxgl-popup-tip {
+  display: none;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -348,6 +360,10 @@ html[data-theme="light"] .bg-gradient-to-br.from-rose-950\/80.via-slate-900.to-s
     rgba(248, 250, 252, 0.98)
   );
 }
+
+/* Radar marker ring animations */
+@keyframes gi-cw  { to { transform: rotate(360deg);  } }
+@keyframes gi-ccw { to { transform: rotate(-360deg); } }
 
 @media (max-width: 640px) {
   .fixed.inset-0.z-40,

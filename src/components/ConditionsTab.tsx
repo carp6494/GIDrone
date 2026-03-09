@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
+  type MutableRefObject,
   type ReactNode,
 } from "react"
 import {
@@ -2255,132 +2256,132 @@ const TfrModal = ({
   </div>
 )
 
-type RainViewerFrame = {
-  host: string
-  path: string
-  time: number
-}
-
-type RainViewerResponse = {
-  host?: unknown
-  radar?: {
-    past?: Array<{
-      path?: unknown
-      time?: unknown
-    }>
-    nowcast?: Array<{
-      path?: unknown
-      time?: unknown
-    }>
-  }
-}
-
 type RadarSnapshotPanelProps = {
   lat: number
   lon: number
-  locationLabel: string
   theme: ThemeMode
-  timeFormat: TimeFormat
 }
 
-const RADAR_MAX_FRAMES = 36
-const RADAR_TARGET_LOOP_MS = 9_000
-const RAIN_VIEWER_INDEX_URL = "https://api.rainviewer.com/public/weather-maps.json"
-const RAIN_VIEWER_DEFAULT_HOST = "https://tilecache.rainviewer.com"
-const RADAR_MAP_STYLES: Record<ThemeMode, string> = {
+type SnapshotStyleKey = "streets" | "satellite" | "hybrid"
+
+const SNAPSHOT_THEMED_STREETS: Record<ThemeMode, string> = {
   light: "mapbox://styles/mapbox/streets-v12",
   dark: "mapbox://styles/mapbox/dark-v11",
 }
-const RADAR_TARGET_OPACITY = 0.82
-const RADAR_SOURCE_IDS = ["conditions-radar-source-a", "conditions-radar-source-b"] as const
-const RADAR_LAYER_IDS = ["conditions-radar-layer-a", "conditions-radar-layer-b"] as const
-const RADAR_TILE_SIZE = 256
 
-const buildRadarTileTemplate = (frame: RainViewerFrame) =>
-  `${frame.host}${frame.path}/${RADAR_TILE_SIZE}/{z}/{x}/{y}/6/1_1.png`
-
-const removeRadarSlot = (map: mapboxgl.Map, slot: 0 | 1) => {
-  const layerId = RADAR_LAYER_IDS[slot]
-  const sourceId = RADAR_SOURCE_IDS[slot]
-  if (map.getLayer(layerId)) {
-    map.removeLayer(layerId)
-  }
-  if (map.getSource(sourceId)) {
-    map.removeSource(sourceId)
-  }
+const SNAPSHOT_STYLE_URLS: Record<Exclude<SnapshotStyleKey, "streets">, string> = {
+  satellite: "mapbox://styles/mapbox/satellite-v9",
+  hybrid: "mapbox://styles/mapbox/satellite-streets-v12",
 }
 
-const setRadarLayerOpacity = (map: mapboxgl.Map, slot: 0 | 1, opacity: number) => {
-  const layerId = RADAR_LAYER_IDS[slot]
-  if (!map.getLayer(layerId)) return
-  map.setPaintProperty(layerId, "raster-opacity", Math.max(0, Math.min(opacity, RADAR_TARGET_OPACITY)))
-}
+const resolveSnapshotStyle = (key: SnapshotStyleKey, theme: ThemeMode): string =>
+  key === "streets" ? SNAPSHOT_THEMED_STREETS[theme] : SNAPSHOT_STYLE_URLS[key]
 
-const mountRadarSlot = (map: mapboxgl.Map, slot: 0 | 1, frame: RainViewerFrame, opacity: number) => {
-  const sourceId = RADAR_SOURCE_IDS[slot]
-  const layerId = RADAR_LAYER_IDS[slot]
-  removeRadarSlot(map, slot)
+type RainViewerFrame = { time: number; path: string; host: string; isNowcast: boolean }
 
-  map.addSource(sourceId, {
-    type: "raster",
-    tiles: [buildRadarTileTemplate(frame)],
-    tileSize: RADAR_TILE_SIZE,
-  })
-  map.addLayer({
-    id: layerId,
-    type: "raster",
-    source: sourceId,
-    paint: {
-      "raster-opacity": opacity,
-      "raster-opacity-transition": { duration: 0, delay: 0 },
-    },
+const RV_COLOR_SCHEME = 6
+const RV_OPTIONS = "1_1"
+const RV_DEFAULT_OPACITY = 0.85
+const FRAME_INTERVAL_MS = 700
+const MORPH_DURATION_MS = 550
+const LOOP_PAUSE_MS = 1500
+
+const buildRvTileUrl = (host: string, path: string) =>
+  `${host}${path}/256/{z}/{x}/{y}/${RV_COLOR_SCHEME}/${RV_OPTIONS}.png`
+
+const rvSourceId = (idx: number) => `rv-frame-${idx}`
+const rvLayerId = (idx: number) => `rv-layer-${idx}`
+
+const addFrameLayers = (map: mapboxgl.Map, frames: RainViewerFrame[]) => {
+  frames.forEach((frame, idx) => {
+    map.addSource(rvSourceId(idx), {
+      type: "raster",
+      tiles: [buildRvTileUrl(frame.host, frame.path)],
+      tileSize: 256,
+      minzoom: 0,
+      maxzoom: 6,
+    })
+    map.addLayer({
+      id: rvLayerId(idx),
+      type: "raster",
+      source: rvSourceId(idx),
+      paint: { "raster-opacity": 0 },
+    })
   })
 }
 
-const getTileCoordinate = (lat: number, lon: number, zoom: number) => {
-  const clampedLat = Math.max(Math.min(lat, 85.05112878), -85.05112878)
-  const latRad = (clampedLat * Math.PI) / 180
-  const scale = 2 ** zoom
-  const x = Math.floor(((lon + 180) / 360) * scale)
-  const y = Math.floor(
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale
-  )
-  return { x, y }
+const removeFrameLayers = (map: mapboxgl.Map, count: number) => {
+  for (let i = 0; i < count; i++) {
+    if (map.getLayer(rvLayerId(i))) map.removeLayer(rvLayerId(i))
+    if (map.getSource(rvSourceId(i))) map.removeSource(rvSourceId(i))
+  }
 }
+
+const easeInOut = (t: number) =>
+  t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2
+
+const morphToFrame = (
+  map: mapboxgl.Map,
+  fromIdx: number,
+  toIdx: number,
+  rafRef: MutableRefObject<number | null>,
+  opacityRef: MutableRefObject<number>
+) => {
+  if (rafRef.current !== null) {
+    cancelAnimationFrame(rafRef.current)
+    rafRef.current = null
+  }
+  const start = performance.now()
+  const tick = (now: number) => {
+    const opacity = opacityRef.current
+    const t = easeInOut(Math.min((now - start) / MORPH_DURATION_MS, 1))
+    if (fromIdx !== toIdx && map.getLayer(rvLayerId(fromIdx))) {
+      map.setPaintProperty(rvLayerId(fromIdx), "raster-opacity", opacity * (1 - t))
+    }
+    if (map.getLayer(rvLayerId(toIdx))) {
+      map.setPaintProperty(rvLayerId(toIdx), "raster-opacity", opacity * t)
+    }
+    rafRef.current = t < 1 ? requestAnimationFrame(tick) : null
+  }
+  rafRef.current = requestAnimationFrame(tick)
+}
+
+const getFrameLabel = (frame: RainViewerFrame): string =>
+  new Date(frame.time * 1000).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  })
 
 const RadarSnapshotPanel = ({
   lat,
   lon,
-  locationLabel,
   theme,
-  timeFormat,
 }: RadarSnapshotPanelProps) => {
-  const [frameStatus, setFrameStatus] = useState<"loading" | "ready" | "error">("loading")
-  const [frames, setFrames] = useState<RainViewerFrame[]>([])
-  const [activeFrameIndex, setActiveFrameIndex] = useState(0)
-  const [sliderValue, setSliderValue] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(true)
   const [mapLoaded, setMapLoaded] = useState(false)
+  const [rvFrames, setRvFrames] = useState<RainViewerFrame[]>([])
+  const [currentFrameIdx, setCurrentFrameIdx] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [radarStatus, setRadarStatus] = useState<"loading" | "ready" | "error">("loading")
+  const [baseStyle, setBaseStyle] = useState<SnapshotStyleKey>("streets")
+  const [radarOpacity, setRadarOpacity] = useState(RV_DEFAULT_OPACITY)
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
   const appliedMapStyleRef = useRef<string | null>(null)
-  const activeSlotRef = useRef<0 | 1>(0)
-  const fadeFrameRef = useRef<number | null>(null)
-  const fadeTokenRef = useRef(0)
-  const sliderAnimationRef = useRef<number | null>(null)
-  const sliderValueRef = useRef(0)
-  const skipNextSliderAnimationRef = useRef(false)
+  const markerRef = useRef<mapboxgl.Marker | null>(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const rafRef = useRef<number | null>(null)
+  const radarOpacityRef = useRef(RV_DEFAULT_OPACITY)
+  const layersAddedRef = useRef(false)
+  const prevFrameIdxRef = useRef(0)
+  const frameCountRef = useRef(0)
+
   const mapboxToken = (
     import.meta.env.VITE_MAPBOX_ACCESS_TOKEN as string | undefined
   )?.trim()
   const hasMapboxToken = Boolean(mapboxToken)
-  const mapStyle = RADAR_MAP_STYLES[theme]
+  const mapStyle = resolveSnapshotStyle(baseStyle, theme)
 
-  const syncSliderValue = (value: number) => {
-    sliderValueRef.current = value
-    setSliderValue(value)
-  }
-
+  // Map init
   useEffect(() => {
     if (!hasMapboxToken || !mapContainerRef.current || mapRef.current) return
 
@@ -2389,8 +2390,8 @@ const RadarSnapshotPanel = ({
       container: mapContainerRef.current,
       style: mapStyle,
       center: [lon, lat],
-      zoom: 7,
-      minZoom: 4,
+      zoom: 5,
+      minZoom: 2,
       maxZoom: 12,
       attributionControl: false,
       antialias: true,
@@ -2398,179 +2399,32 @@ const RadarSnapshotPanel = ({
     mapRef.current = map
     appliedMapStyleRef.current = mapStyle
 
-    const handleLoad = () => {
+    map.on("load", () => {
       setMapLoaded(true)
-    }
-    map.on("load", handleLoad)
+    })
 
     return () => {
-      map.off("load", handleLoad)
+      if (intervalRef.current) clearInterval(intervalRef.current)
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      removeFrameLayers(map, frameCountRef.current)
+      markerRef.current?.remove()
+      markerRef.current = null
       map.remove()
       mapRef.current = null
       appliedMapStyleRef.current = null
+      layersAddedRef.current = false
       setMapLoaded(false)
     }
   }, [hasMapboxToken, mapStyle, mapboxToken])
 
-  useEffect(
-    () => () => {
-      if (fadeFrameRef.current !== null) {
-        window.cancelAnimationFrame(fadeFrameRef.current)
-      }
-      if (sliderAnimationRef.current !== null) {
-        window.cancelAnimationFrame(sliderAnimationRef.current)
-      }
-    },
-    []
-  )
-
-  useEffect(() => {
-    let cancelled = false
-
-    const loadFrames = async () => {
-      try {
-        const response = await fetch(RAIN_VIEWER_INDEX_URL)
-        if (!response.ok) {
-          throw new Error("Radar feed unavailable")
-        }
-        const payload = (await response.json()) as RainViewerResponse
-        const host =
-          typeof payload.host === "string" && payload.host.trim().length > 0
-            ? payload.host.replace(/\/+$/, "")
-            : RAIN_VIEWER_DEFAULT_HOST
-        const rawPast = Array.isArray(payload.radar?.past) ? payload.radar.past : []
-        const rawNowcast = Array.isArray(payload.radar?.nowcast) ? payload.radar.nowcast : []
-        const mergedFrames = [...rawPast, ...rawNowcast]
-          .map((item) => ({
-            host,
-            path: typeof item.path === "string" ? item.path : "",
-            time: typeof item.time === "number" ? item.time : Number.NaN,
-          }))
-          .filter((item) => item.path.length > 0 && Number.isFinite(item.time))
-          .sort((a, b) => a.time - b.time)
-
-        const dedupedFrames: RainViewerFrame[] = []
-        const seen = new Set<string>()
-        for (const frame of mergedFrames) {
-          const key = `${frame.time}:${frame.path}`
-          if (seen.has(key)) continue
-          seen.add(key)
-          dedupedFrames.push(frame)
-        }
-
-        const nextFrames = dedupedFrames.slice(-RADAR_MAX_FRAMES)
-
-        if (!nextFrames.length) {
-          throw new Error("No radar frames")
-        }
-
-        if (cancelled) return
-        setFrames(nextFrames)
-        setActiveFrameIndex(nextFrames.length - 1)
-        setFrameStatus("ready")
-      } catch {
-        if (cancelled) return
-        setFrameStatus("error")
-      }
-    }
-
-    void loadFrames()
-    const refreshHandle = window.setInterval(() => {
-      void loadFrames()
-    }, 5 * 60 * 1000)
-
-    return () => {
-      cancelled = true
-      window.clearInterval(refreshHandle)
-    }
-  }, [])
-
-  const frameStepMs = useMemo(() => {
-    if (frames.length <= 1) return 520
-    return Math.max(180, Math.min(520, Math.round(RADAR_TARGET_LOOP_MS / frames.length)))
-  }, [frames.length])
-  const fadeDurationMs = useMemo(
-    () => Math.max(160, Math.min(700, Math.round(frameStepMs * 0.72))),
-    [frameStepMs]
-  )
-
-  useEffect(() => {
-    if (!isPlaying || frames.length <= 1) return
-    const playbackHandle = window.setInterval(() => {
-      setActiveFrameIndex((current) => (current + 1) % frames.length)
-    }, frameStepMs)
-
-    return () => {
-      window.clearInterval(playbackHandle)
-    }
-  }, [frameStepMs, frames.length, isPlaying])
-
-  useEffect(() => {
-    if (activeFrameIndex <= frames.length - 1) return
-    setActiveFrameIndex(Math.max(frames.length - 1, 0))
-  }, [activeFrameIndex, frames.length])
-
-  useEffect(() => {
-    skipNextSliderAnimationRef.current = true
-    syncSliderValue(Math.min(activeFrameIndex, Math.max(frames.length - 1, 0)))
-  }, [frames.length])
-
-  useEffect(() => {
-    if (sliderAnimationRef.current !== null) {
-      window.cancelAnimationFrame(sliderAnimationRef.current)
-      sliderAnimationRef.current = null
-    }
-
-    const boundedTarget = Math.min(activeFrameIndex, Math.max(frames.length - 1, 0))
-    const currentValue = sliderValueRef.current
-
-    if (skipNextSliderAnimationRef.current) {
-      skipNextSliderAnimationRef.current = false
-      syncSliderValue(boundedTarget)
-      return
-    }
-
-    if (!isPlaying || frames.length <= 1) {
-      syncSliderValue(boundedTarget)
-      return
-    }
-
-    if (boundedTarget === 0 && currentValue > frames.length - 1.5) {
-      syncSliderValue(0)
-      return
-    }
-
-    if (Math.abs(currentValue - boundedTarget) < 0.001) {
-      syncSliderValue(boundedTarget)
-      return
-    }
-
-    const start = performance.now()
-    const startValue = currentValue
-    const distance = boundedTarget - startValue
-
-    const animateSlider = (nowMs: number) => {
-      const progress = Math.min(1, (nowMs - start) / frameStepMs)
-      syncSliderValue(startValue + distance * progress)
-
-      if (progress < 1) {
-        sliderAnimationRef.current = window.requestAnimationFrame(animateSlider)
-        return
-      }
-
-      sliderAnimationRef.current = null
-      syncSliderValue(boundedTarget)
-    }
-
-    sliderAnimationRef.current = window.requestAnimationFrame(animateSlider)
-  }, [activeFrameIndex, frameStepMs, frames.length, isPlaying])
-
+  // Style switch
   useEffect(() => {
     const map = mapRef.current
     if (!map) return
     if (appliedMapStyleRef.current === mapStyle) return
 
     setMapLoaded(false)
+    layersAddedRef.current = false
     map.once("style.load", () => {
       setMapLoaded(true)
     })
@@ -2578,96 +2432,112 @@ const RadarSnapshotPanel = ({
     map.setStyle(mapStyle)
   }, [mapStyle])
 
+  // Pan to location
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return
-    mapRef.current.easeTo({
-      center: [lon, lat],
-      duration: 600,
-      essential: true,
-    })
+    mapRef.current.easeTo({ center: [lon, lat], duration: 600, essential: true })
   }, [lat, lon, mapLoaded])
 
+  // Location marker
   useEffect(() => {
     if (!mapLoaded || !mapRef.current) return
-    const map = mapRef.current
-    const nextFrame = frames[activeFrameIndex] ?? null
-    if (!nextFrame) {
-      removeRadarSlot(map, 0)
-      removeRadarSlot(map, 1)
-      return
+    if (markerRef.current) {
+      markerRef.current.setLngLat([lon, lat])
+    } else {
+      const el = document.createElement("div")
+      el.style.cssText =
+        "width:12px;height:12px;border-radius:50%;background:#38bdf8;box-shadow:0 0 0 5px rgba(56,189,248,0.2),0 0 12px rgba(56,189,248,0.85),0 2px 8px rgba(0,0,0,0.5);pointer-events:none;"
+      markerRef.current = new mapboxgl.Marker({ element: el, anchor: "center" })
+        .setLngLat([lon, lat])
+        .addTo(mapRef.current)
     }
+  }, [lat, lon, mapLoaded])
 
-    if (fadeFrameRef.current !== null) {
-      window.cancelAnimationFrame(fadeFrameRef.current)
-      fadeFrameRef.current = null
-    }
-
-    const currentSlot = activeSlotRef.current
-    const nextSlot = currentSlot === 0 ? 1 : 0
-    mountRadarSlot(map, nextSlot, nextFrame, 0)
-    setRadarLayerOpacity(map, currentSlot, RADAR_TARGET_OPACITY)
-    setRadarLayerOpacity(map, nextSlot, 0)
-
-    const token = fadeTokenRef.current + 1
-    fadeTokenRef.current = token
-    const start = performance.now()
-
-    const runFade = (nowMs: number) => {
-      if (fadeTokenRef.current !== token) return
-      const progress = Math.min(1, (nowMs - start) / fadeDurationMs)
-      const currentOpacity = RADAR_TARGET_OPACITY * (1 - progress)
-      const nextOpacity = RADAR_TARGET_OPACITY * progress
-      setRadarLayerOpacity(map, currentSlot, currentOpacity)
-      setRadarLayerOpacity(map, nextSlot, nextOpacity)
-
-      if (progress < 1) {
-        fadeFrameRef.current = window.requestAnimationFrame(runFade)
-        return
-      }
-
-      fadeFrameRef.current = null
-      activeSlotRef.current = nextSlot
-    }
-
-    fadeFrameRef.current = window.requestAnimationFrame(runFade)
-  }, [activeFrameIndex, fadeDurationMs, frames, mapLoaded])
-
+  // Fetch RainViewer frames once on mount
   useEffect(() => {
-    if (!frames.length) return
-    const warmupZoom = 7
-    const centerTile = getTileCoordinate(lat, lon, warmupZoom)
-    const warmupImages: HTMLImageElement[] = []
-
-    for (const frame of frames) {
-      const image = new Image()
-      image.decoding = "async"
-      image.src = `${frame.host}${frame.path}/${RADAR_TILE_SIZE}/${warmupZoom}/${centerTile.x}/${centerTile.y}/6/1_1.png`
-      warmupImages.push(image)
+    let cancelled = false
+    const fetchFrames = async () => {
+      try {
+        const res = await fetch("https://api.rainviewer.com/public/weather-maps.json")
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const data: {
+          host: string
+          radar?: {
+            past?: Array<{ time: number; path: string }>
+            nowcast?: Array<{ time: number; path: string }>
+          }
+        } = await res.json()
+        if (cancelled) return
+        const host = data.host
+        const past = (data.radar?.past ?? []).map((f) => ({ ...f, host, isNowcast: false }))
+        const nowcast = (data.radar?.nowcast ?? []).map((f) => ({ ...f, host, isNowcast: true }))
+        setRvFrames([...past, ...nowcast])
+      } catch {
+        if (!cancelled) setRadarStatus("error")
+      }
     }
-
+    void fetchFrames()
     return () => {
-      warmupImages.forEach((image) => {
-        image.src = ""
+      cancelled = true
+    }
+  }, [])
+
+  // Add all frame layers when map + frames are ready
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current || rvFrames.length === 0 || layersAddedRef.current) return
+    frameCountRef.current = rvFrames.length
+    addFrameLayers(mapRef.current, rvFrames)
+    if (mapRef.current.getLayer(rvLayerId(0))) {
+      mapRef.current.setPaintProperty(rvLayerId(0), "raster-opacity", radarOpacityRef.current)
+    }
+    layersAddedRef.current = true
+    setRadarStatus("ready")
+    setIsPlaying(true)
+  }, [mapLoaded, rvFrames])
+
+  // Animation interval
+  useEffect(() => {
+    if (!isPlaying || rvFrames.length === 0) return
+    const advance = () => {
+      setCurrentFrameIdx((prev) => {
+        const next = prev + 1
+        if (next >= rvFrames.length) {
+          setIsPlaying(false)
+          setTimeout(() => {
+            setCurrentFrameIdx(0)
+            setIsPlaying(true)
+          }, LOOP_PAUSE_MS)
+          return prev
+        }
+        return next
       })
     }
-  }, [frames, lat, lon])
+    intervalRef.current = setInterval(advance, FRAME_INTERVAL_MS)
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current)
+    }
+  }, [isPlaying, rvFrames.length])
 
-  const activeFrame = frames[activeFrameIndex] ?? null
-  const activeFrameLabel = activeFrame
-    ? formatLocalTime(activeFrame.time * 1000, timeFormat)
-    : "--"
+  // Sync visible frame to map
+  useEffect(() => {
+    if (!mapLoaded || !mapRef.current || !layersAddedRef.current || rvFrames.length === 0) return
+    morphToFrame(mapRef.current, prevFrameIdxRef.current, currentFrameIdx, rafRef, radarOpacityRef)
+    prevFrameIdxRef.current = currentFrameIdx
+  }, [currentFrameIdx, mapLoaded, rvFrames])
+
   const handleZoomOut = () => {
     const map = mapRef.current
     if (!map) return
-    const nextZoom = Math.max(4, map.getZoom() - 0.8)
-    map.easeTo({ zoom: nextZoom, duration: 220, essential: true })
+    map.easeTo({ zoom: Math.max(4, map.getZoom() - 0.8), duration: 220, essential: true })
   }
   const handleZoomIn = () => {
     const map = mapRef.current
     if (!map) return
-    const nextZoom = Math.min(12, map.getZoom() + 0.8)
-    map.easeTo({ zoom: nextZoom, duration: 220, essential: true })
+    map.easeTo({ zoom: Math.min(12, map.getZoom() + 0.8), duration: 220, essential: true })
   }
+  const handlePlayPause = () => setIsPlaying((prev) => !prev)
+
+  const currentFrame = rvFrames[currentFrameIdx]
 
   return (
     <div className="w-full rounded-2xl border border-slate-800/80 bg-slate-950/70 p-4 md:flex-1 md:max-w-md">
@@ -2676,17 +2546,17 @@ const RadarSnapshotPanel = ({
       <div className="relative mt-2 h-48 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-950/95">
         <div ref={mapContainerRef} className="h-full w-full" />
 
-        {frameStatus === "loading" && (
+        {radarStatus === "loading" && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-950/70 text-xs uppercase tracking-[0.25em] text-slate-300">
             Loading Radar...
           </div>
         )}
         {!hasMapboxToken && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 px-4 text-center text-xs text-amber-200">
-            Add VITE_MAPBOX_ACCESS_TOKEN to enable pan/zoom controls.
+            Add VITE_MAPBOX_ACCESS_TOKEN to enable map.
           </div>
         )}
-        {frameStatus === "error" && (
+        {radarStatus === "error" && hasMapboxToken && (
           <div className="absolute inset-0 flex items-center justify-center bg-slate-950/80 px-4 text-center text-xs text-rose-200">
             Radar snapshot unavailable.
           </div>
@@ -2694,8 +2564,8 @@ const RadarSnapshotPanel = ({
       </div>
 
       <div className="mt-3 rounded-2xl border border-slate-800/70 bg-slate-950/60 px-3 py-2">
-        <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-[0.24em] text-slate-500">
-          <span>Map</span>
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] uppercase tracking-[0.24em] text-slate-500">Map</span>
           <button
             type="button"
             onClick={handleZoomOut}
@@ -2714,42 +2584,85 @@ const RadarSnapshotPanel = ({
           >
             <ZoomIn className="h-3 w-3" />
           </button>
-          <span className="mx-1 h-3 w-px bg-slate-700/80" aria-hidden="true" />
-          <span className="max-w-[12rem] truncate text-[11px] tracking-[0.12em] normal-case text-slate-300 sm:max-w-[15rem]">
-            Location: {locationLabel}
-          </span>
-          <span className="ml-auto text-slate-300">
-            {frames.length > 0 ? `${activeFrameIndex + 1}/${frames.length}` : "--"}
-          </span>
-        </div>
-        <div className="mt-1.5 flex items-center gap-2">
+          <span className="mx-0.5 h-3 w-px bg-slate-700/80" aria-hidden="true" />
+          {/* Play/Pause */}
           <button
             type="button"
-            onClick={() => setIsPlaying((current) => !current)}
-            disabled={frames.length <= 1}
-            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-emerald-400/50 bg-emerald-400/10 text-emerald-100 transition hover:border-emerald-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label={isPlaying ? "Pause radar playback" : "Play radar playback"}
+            onClick={handlePlayPause}
+            disabled={!hasMapboxToken || radarStatus !== "ready"}
+            className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-slate-700 bg-slate-900/70 text-slate-200 transition hover:border-emerald-300 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={isPlaying ? "Pause radar" : "Play radar"}
           >
             {isPlaying ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
           </button>
+          {/* Progress dots */}
+          <div className="flex flex-1 items-center gap-[3px] overflow-hidden">
+            {rvFrames.map((frame, idx) => (
+              <button
+                key={frame.time}
+                type="button"
+                onClick={() => {
+                  prevFrameIdxRef.current = currentFrameIdx
+                  setCurrentFrameIdx(idx)
+                }}
+                aria-label={`Jump to ${getFrameLabel(frame)}`}
+                className={[
+                  "h-1.5 shrink-0 rounded-full transition-all duration-200",
+                  frame.isNowcast
+                    ? idx === currentFrameIdx
+                      ? "w-3 bg-sky-400"
+                      : "w-1.5 bg-sky-500/40 hover:bg-sky-400/60"
+                    : idx === currentFrameIdx
+                      ? "w-3 bg-emerald-400"
+                      : "w-1.5 bg-slate-600 hover:bg-slate-400",
+                ].join(" ")}
+              />
+            ))}
+          </div>
+          {/* Timestamp */}
+          <span className="w-16 shrink-0 text-right text-[10px] tabular-nums tracking-tight text-slate-400">
+            {currentFrame ? getFrameLabel(currentFrame) : "--"}
+          </span>
+        </div>
+
+        {/* Map style selector */}
+        <div className="mt-2 flex items-center gap-1.5">
+          <span className="shrink-0 text-[10px] uppercase tracking-[0.24em] text-slate-500">View</span>
+          {(["streets", "satellite", "hybrid"] as SnapshotStyleKey[]).map((key) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setBaseStyle(key)}
+              className={`flex-1 rounded-full py-0.5 text-[9px] uppercase tracking-[0.08em] transition ${
+                baseStyle === key
+                  ? "bg-emerald-400 text-slate-950 font-semibold"
+                  : "text-slate-400 hover:text-white"
+              }`}
+            >
+              {key === "streets" ? "Streets" : key === "satellite" ? "Satellite" : "Hybrid"}
+            </button>
+          ))}
+        </div>
+
+        {/* Radar opacity */}
+        <div className="mt-2 flex items-center gap-2">
+          <span className="shrink-0 text-[10px] uppercase tracking-[0.24em] text-slate-500">Opacity</span>
           <input
             type="range"
-            min={0}
-            max={Math.max(frames.length - 1, 0)}
-            step="any"
-            value={Math.min(sliderValue, Math.max(frames.length - 1, 0))}
-            onChange={(event) => {
-              setIsPlaying(false)
-              const nextValue = Number(event.target.value)
-              syncSliderValue(nextValue)
-              setActiveFrameIndex(Math.round(nextValue))
+            min={0.1}
+            max={1}
+            step={0.05}
+            value={radarOpacity}
+            onChange={(e) => {
+              const v = Number(e.target.value)
+              radarOpacityRef.current = v
+              setRadarOpacity(v)
             }}
-            disabled={frames.length <= 1}
-            className="radar-timeline-slider h-1.5 w-full cursor-pointer appearance-none bg-transparent disabled:cursor-not-allowed disabled:opacity-40"
-            aria-label="Radar frame timeline"
+            className="flex-1 accent-emerald-400"
+            aria-label="Radar opacity"
           />
-          <span className="shrink-0 text-[10px] uppercase tracking-[0.24em] text-slate-300">
-            {activeFrameLabel}
+          <span className="w-8 shrink-0 text-right text-[10px] tabular-nums text-slate-400">
+            {Math.round(radarOpacity * 100)}%
           </span>
         </div>
       </div>
@@ -3680,9 +3593,7 @@ export function ConditionsTab({
             <RadarSnapshotPanel
               lat={activeCoords.lat}
               lon={activeCoords.lon}
-              locationLabel={locationSummary}
               theme={theme}
-              timeFormat={timeFormat}
             />
           </div>
         </header>

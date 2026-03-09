@@ -394,6 +394,49 @@ function AppShell() {
 
   const effectiveUserId = user?.id ?? null
 
+  const [radarSites, setRadarSites] = useState<
+    {
+      name: string; lat: number; lon: number
+      siteNumber?: string | null; city?: string | null; county?: string | null
+      state?: string | null; structureType?: string | null; notes?: string | null
+      photoUrl?: string | null; customFields?: Record<string, string> | null
+    }[]
+  >([])
+
+  useEffect(() => {
+    if (!effectiveUserId) {
+      setRadarSites([])
+      return
+    }
+    supabase
+      .from("sites")
+      .select("*")
+      .eq("user_id", effectiveUserId)
+      .then(({ data }) => {
+        if (!data) return
+        setRadarSites(
+          data.flatMap((s) => {
+            const lat = typeof s.latitude === "number" ? s.latitude : null
+            const lon = typeof s.longitude === "number" ? s.longitude : null
+            if (lat === null || lon === null) return []
+            return [{
+              name: (s.site_name ?? s.site_number ?? "Site") as string,
+              lat,
+              lon,
+              siteNumber: (s.site_number as string | null) ?? null,
+              city: (s.city as string | null) ?? null,
+              county: (s.county as string | null) ?? null,
+              state: (s.state as string | null) ?? null,
+              structureType: (s.structure_type as string | null) ?? null,
+              notes: (s.notes as string | null) ?? null,
+              photoUrl: (s.photo_url as string | null) ?? null,
+              customFields: (s.custom_fields as Record<string, string> | null) ?? null,
+            }]
+          })
+        )
+      })
+  }, [effectiveUserId])
+
   const panel = useMemo(() => {
     if (activeTab === "conditions") {
       return (
@@ -453,6 +496,7 @@ function AppShell() {
           theme={theme}
           focusLocation={mapFocus ?? undefined}
           defaultCenter={activeCoords}
+          sites={radarSites}
         />
       )
     }
@@ -542,6 +586,7 @@ function AppShell() {
     activeCoords,
     activeGpsAccuracy,
     activeLocationLabel,
+    radarSites,
   ])
 
   const tabRowAlignmentClass = TOP_TAB_BAR.alignment === "left" ? "justify-start" : "justify-center"
