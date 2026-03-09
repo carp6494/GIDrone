@@ -328,11 +328,27 @@ function AppShell() {
 
     loadSession()
 
+    // Detect fresh OAuth callback before the URL gets cleaned up
+    const isFreshSignIn = (() => {
+      if (typeof window === "undefined") return false
+      const url = new URL(window.location.href)
+      if (url.searchParams.has("code")) return true
+      const h = url.hash
+      return h.includes("access_token=") || h.includes("refresh_token=")
+    })()
+
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
       if (ac.signal.aborted) return
       console.log("[auth] event:", event, "hasSession:", !!session, session?.user?.email ?? null)
       setUser(session?.user ?? null)
       if (session) setAuthError(null)
+
+      // Fresh sign-in → default to Conditions tab
+      if (event === "SIGNED_IN" && isFreshSignIn) {
+        setActiveTab("conditions")
+        window.localStorage.setItem("gi-drone:activeTab", "conditions")
+      }
+
       setLoading(false)
       stripAuthNoiseFromUrl()
     })
