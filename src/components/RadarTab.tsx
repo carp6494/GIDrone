@@ -5,6 +5,7 @@ import { Layers, Loader2, MapPin, Pause, Play, Radar, Satellite, Settings, Targe
 
 import { useNotams } from "../hooks/useNotams"
 import { useTfrs } from "../hooks/useTfrs"
+import { fetchTfrWebText } from "../lib/aviation/tfrClient"
 import type { BoundsTuple, NotamFeatureProperties, NotamItem, TfrFeatureProperties } from "../lib/aviation/types"
 import type { ThemeMode } from "../lib/theme"
 
@@ -181,7 +182,8 @@ const makeRing = (
   color: string,
   width: number,
   gapSides: string, // e.g. "borderTopColor" or "borderTopColor,borderRightColor"
-  anim: string
+  anim: string,
+  bg?: string
 ): HTMLDivElement => {
   const r = document.createElement("div")
   const offset = -size / 2
@@ -197,7 +199,8 @@ const makeRing = (
     `border:${width}px solid ${color}`,
     `animation:${anim}`,
     `pointer-events:none`,
-  ].join(";")
+    bg ? `background:${bg}` : "",
+  ].filter(Boolean).join(";")
   gapSides.split(",").forEach((side) => {
     ;(r.style as unknown as Record<string, string>)[side.trim()] = "transparent"
   })
@@ -207,12 +210,12 @@ const makeRing = (
 const createOrbitMarker = (
   dotColor: string,
   dotGlow: string,
-  rings: { size: number; color: string; width: number; gap: string; anim: string }[]
+  rings: { size: number; color: string; width: number; gap: string; anim: string; bg?: string }[]
 ): HTMLDivElement => {
   const wrap = document.createElement("div")
   wrap.style.cssText = "position:relative;width:1px;height:1px;pointer-events:none;"
-  rings.forEach(({ size, color, width, gap, anim }) => {
-    wrap.appendChild(makeRing(size, color, width, gap, anim))
+  rings.forEach(({ size, color, width, gap, anim, bg }) => {
+    wrap.appendChild(makeRing(size, color, width, gap, anim, bg))
   })
   const dot = document.createElement("div")
   dot.style.cssText = [
@@ -233,17 +236,17 @@ const createOrbitMarker = (
 }
 
 const createNotamMarkerElement = () =>
-  createOrbitMarker("#38bdf8", "rgba(56,189,248,0.9)", [
-    { size: 36, color: "#0ea5e9", width: 1.5, gap: "borderTopColor,borderRightColor", anim: "gi-cw 7s linear infinite" },
-    { size: 24, color: "#7dd3fc", width: 1,   gap: "borderBottomColor,borderLeftColor",  anim: "gi-ccw 4.5s linear infinite" },
-    { size: 14, color: "#bae6fd", width: 1,   gap: "borderTopColor",                     anim: "gi-cw 2.8s linear infinite" },
+  createOrbitMarker("#f87171", "rgba(239,68,68,0.9)", [
+    { size: 36, color: "#ef4444", width: 1.5, gap: "borderTopColor,borderRightColor", anim: "gi-cw 7s linear infinite", bg: "rgba(239,68,68,0.12)" },
+    { size: 24, color: "#dc2626", width: 1,   gap: "borderBottomColor,borderLeftColor",  anim: "gi-ccw 4.5s linear infinite", bg: "rgba(239,68,68,0.12)" },
+    { size: 14, color: "#b91c1c", width: 1,   gap: "borderTopColor",                     anim: "gi-cw 2.8s linear infinite", bg: "rgba(239,68,68,0.12)" },
   ])
 
 const createTfrMarkerElement = () =>
-  createOrbitMarker("#fbbf24", "rgba(251,191,36,0.9)", [
-    { size: 38, color: "#f59e0b", width: 1.5, gap: "borderTopColor,borderLeftColor",     anim: "gi-ccw 8s linear infinite" },
-    { size: 26, color: "#fde68a", width: 1,   gap: "borderRightColor,borderBottomColor", anim: "gi-cw 5s linear infinite" },
-    { size: 15, color: "#fef3c7", width: 1,   gap: "borderBottomColor",                  anim: "gi-ccw 3s linear infinite" },
+  createOrbitMarker("#facc15", "rgba(250,204,21,0.95)", [
+    { size: 38, color: "#eab308", width: 1.5, gap: "borderTopColor,borderLeftColor",     anim: "gi-ccw 8s linear infinite", bg: "rgba(234,179,8,0.18)" },
+    { size: 26, color: "#facc15", width: 1,   gap: "borderRightColor,borderBottomColor", anim: "gi-cw 5s linear infinite",  bg: "rgba(234,179,8,0.18)" },
+    { size: 15, color: "#fde047", width: 1,   gap: "borderBottomColor",                  anim: "gi-ccw 3s linear infinite", bg: "rgba(234,179,8,0.18)" },
   ])
 
 const createFocusMarkerElement = () => {
@@ -379,7 +382,9 @@ const buildTfrPopupHtml = (properties: Partial<TfrFeatureProperties>, theme: The
     subtitle ? `<span style="color:${text};">${subtitle}</span>` : "",
     `<span><strong style="color:${text};">Effective:</strong> ${escapeHtml(effectiveWindow)}</span>`,
     description,
-    fAAUrl ? `<a href="${escapeHtml(fAAUrl)}" target="_blank" rel="noopener noreferrer" style="color:#60a5fa;">FAA detail ↗</a>` : "",
+    fAAUrl && properties.notamId
+      ? `<button onclick="window.__giDroneTfrDetail && window.__giDroneTfrDetail(this,'${escapeHtml(String(properties.notamId)).replace(/'/g, "\\'")}')" style="background:none;border:none;padding:0;color:#60a5fa;cursor:pointer;font:inherit;text-decoration:underline;">FAA detail ↗</button>`
+      : "",
   ]
   return buildPopupCard(theme, title, rows)
 }
@@ -645,7 +650,7 @@ const ensureNotamLayer = (
       type: "fill",
       source: NOTAM_SOURCE_ID,
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "fill-color": "#22d3ee", "fill-opacity": 0.14 },
+      paint: { "fill-color": "#ef4444", "fill-opacity": 0.14 },
       layout: { visibility: visible ? "visible" : "none" },
     })
   }
@@ -655,7 +660,7 @@ const ensureNotamLayer = (
       type: "line",
       source: NOTAM_SOURCE_ID,
       filter: ["==", ["geometry-type"], "Polygon"],
-      paint: { "line-color": "#67e8f9", "line-width": 2, "line-opacity": 0.95 },
+      paint: { "line-color": "#f87171", "line-width": 2, "line-opacity": 0.95 },
       layout: { visibility: visible ? "visible" : "none" },
     })
   }
@@ -783,6 +788,74 @@ const applyFocusLocation = (
   }
 }
 
+/** Renders FAA TFR detail HTML with dark-mode-friendly styling */
+const renderFaaDetailHtml = (html: string, theme: ThemeMode = "dark"): string => {
+  if (!html.trim()) return `<p style="color:#94a3b8;">No detail content available.</p>`
+
+  const isDark = theme === "dark"
+  const textColor = isDark ? "#cbd5e1" : "#334155"
+  const headerBg = isDark ? "#1e40af" : "#2563eb"
+  const headerText = isDark ? "#fbbf24" : "#ffffff"
+  const linkColor = isDark ? "#60a5fa" : "#2563eb"
+
+  return [
+    `<style>`,
+    `.faa-detail table{width:100%!important;border-collapse:collapse}`,
+    `.faa-detail tr[bgcolor="#1E90FF"] td,.faa-detail tr[bgcolor="#1e90ff"] td{background:${headerBg}!important;color:${headerText}!important;font-weight:700;font-size:11px;padding:4px 6px;text-transform:uppercase;letter-spacing:.04em}`,
+    `.faa-detail td{color:${textColor}!important;padding:3px 6px;font-size:12px;vertical-align:top}`,
+    `.faa-detail font{color:inherit!important;font-family:inherit!important;font-size:inherit!important}`,
+    `.faa-detail a{color:${linkColor}!important;text-decoration:underline}`,
+    `.faa-detail img{display:none}`,
+    `.faa-detail dl,.faa-detail dd{margin:0;padding:0 0 0 8px}`,
+    `</style>`,
+    `<div class="faa-detail" style="font-size:12px;color:${textColor};line-height:1.5;">${html}</div>`,
+  ].join("")
+}
+
+/** Builds a standalone detail popup card for FAA TFR content */
+const buildDetailPopupHtml = (
+  notamId: string,
+  content: string,
+  theme: ThemeMode,
+): string => {
+  const isDark = theme === "dark"
+  const bg = isDark ? "#0f172a" : "#ffffff"
+  const text = isDark ? "#f1f5f9" : "#0f172a"
+  const muted = isDark ? "#94a3b8" : "#64748b"
+  const border = isDark ? "#1e293b" : "#e2e8f0"
+  const closeBg = isDark ? "rgba(30,41,59,0.8)" : "rgba(226,232,240,0.8)"
+  const closeHover = isDark ? "#f1f5f9" : "#0f172a"
+
+  return `
+    <div style="font-size:12px;color:${text};background:${bg};max-width:420px;min-width:280px;border-radius:10px;overflow:hidden;line-height:1.5;font-family:inherit;box-shadow:0 4px 24px rgba(0,0,0,0.35);">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:10px 10px 6px 12px;border-bottom:1px solid ${border};">
+        <div style="font-weight:700;font-size:13px;padding-right:8px;">TFR Detail — ${escapeHtml(notamId)}</div>
+        <button
+          onclick="this.closest('.mapboxgl-popup').remove()"
+          style="flex-shrink:0;width:20px;height:20px;border-radius:4px;border:none;background:${closeBg};color:${muted};font-size:14px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;"
+          onmouseover="this.style.color='${closeHover}'"
+          onmouseout="this.style.color='${muted}'"
+        >×</button>
+      </div>
+      <div style="padding:10px 12px 12px;max-height:350px;overflow-y:auto;">
+        ${content}
+      </div>
+    </div>
+  `
+}
+
+/** Loading state card for the detail popup */
+const buildDetailLoadingHtml = (theme: ThemeMode): string => {
+  const isDark = theme === "dark"
+  const bg = isDark ? "#0f172a" : "#ffffff"
+  const muted = isDark ? "#94a3b8" : "#64748b"
+  return `
+    <div style="font-size:12px;color:${muted};background:${bg};max-width:420px;min-width:200px;border-radius:10px;overflow:hidden;line-height:1.5;font-family:inherit;box-shadow:0 4px 24px rgba(0,0,0,0.35);padding:16px 20px;text-align:center;">
+      Loading FAA detail…
+    </div>
+  `
+}
+
 export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: RadarTabProps) {
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const mapRef = useRef<mapboxgl.Map | null>(null)
@@ -794,6 +867,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   const lastDefaultCenterRef = useRef<{ lat: number; lon: number } | null>(null)
   const tfrPopupRef = useRef<mapboxgl.Popup | null>(null)
   const notamPopupRef = useRef<mapboxgl.Popup | null>(null)
+  const detailPopupRef = useRef<mapboxgl.Popup | null>(null)
   const didRunInitialStyleEffectRef = useRef(false)
   const tfrInteractionsBoundRef = useRef(false)
   const notamInteractionsBoundRef = useRef(false)
@@ -825,6 +899,55 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     return isNaN(v) ? RV_DEFAULT_OPACITY : Math.min(1, Math.max(0, v))
   })
   const [showSettings, setShowSettings] = useState(false)
+  // Register global callback for popup button — opens a secondary detail popup
+  useEffect(() => {
+    const handler = (_btn: HTMLElement, notamId: string) => {
+      const map = mapRef.current
+      if (!map) return
+
+      // Get coordinates from the summary popup that spawned this
+      const lngLat =
+        tfrPopupRef.current?.getLngLat() ?? notamPopupRef.current?.getLngLat()
+      if (!lngLat) return
+
+      // Remove any existing detail popup
+      detailPopupRef.current?.remove()
+
+      // Show a loading detail popup above the summary popup
+      detailPopupRef.current = new mapboxgl.Popup({
+        offset: { bottom: [0, -30], top: [0, 10], left: [10, 0], right: [-10, 0] },
+        closeButton: false,
+        className: "tfr-detail-popup",
+        maxWidth: "420px",
+      })
+        .setLngLat(lngLat)
+        .setHTML(buildDetailLoadingHtml(themeRef.current))
+        .addTo(map)
+
+      fetchTfrWebText(notamId)
+        .then((res) => {
+          if (!detailPopupRef.current) return
+          const detailHtml = buildDetailPopupHtml(
+            notamId,
+            renderFaaDetailHtml(res.html, themeRef.current),
+            themeRef.current,
+          )
+          detailPopupRef.current.setHTML(detailHtml)
+        })
+        .catch((err) => {
+          if (!detailPopupRef.current) return
+          const msg = err instanceof Error ? err.message : "Failed to load detail"
+          const errorHtml = buildDetailPopupHtml(
+            notamId,
+            `<p style="color:#fca5a5;font-size:12px;">${escapeHtml(msg)}</p>`,
+            themeRef.current,
+          )
+          detailPopupRef.current.setHTML(errorHtml)
+        })
+    }
+    ;(window as unknown as Record<string, unknown>).__giDroneTfrDetail = handler
+    return () => { delete (window as unknown as Record<string, unknown>).__giDroneTfrDetail }
+  }, [])
 
   const mapboxToken = (
     (import.meta.env.VITE_MAPBOX_ACCESS_TOKEN ??
@@ -1050,6 +1173,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
       removeFrameLayers(map, frameCountRef.current)
       tfrPopupRef.current?.remove()
       notamPopupRef.current?.remove()
+      detailPopupRef.current?.remove()
       notamMarkersRef.current.forEach((m) => m.remove())
       notamMarkersRef.current = []
       tfrMarkersRef.current.forEach((m) => m.remove())
@@ -1077,8 +1201,11 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
     intervalRef.current = null
     rafRef.current = null
+    setIsPlaying(false)
+    removeFrameLayers(map, frameCountRef.current)
     tfrPopupRef.current?.remove()
     notamPopupRef.current?.remove()
+    detailPopupRef.current?.remove()
     tfrInteractionsBoundRef.current = false
     notamInteractionsBoundRef.current = false
     layersAddedRef.current = false
@@ -1283,6 +1410,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
         />
 
         <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/70 via-transparent to-transparent" />
+
       </div>
 
       <div className="mt-3 rounded-2xl border border-slate-800/70 bg-slate-950/80 p-3 backdrop-blur sm:rounded-3xl sm:p-4">
@@ -1322,7 +1450,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
             onClick={() => setShowNotam((prev) => !prev)}
             className={`pointer-events-auto rounded-full border px-3 py-1 transition ${
               showNotam
-                ? "border-cyan-300/70 bg-cyan-400/15 text-cyan-100"
+                ? "border-red-400/70 bg-red-500/15 text-red-100"
                 : "border-slate-800 text-slate-400 hover:text-white"
             }`}
           >
@@ -1466,16 +1594,16 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
             </span>
           )}
           {notams.isLoading || notams.isRefreshing ? (
-            <span className="inline-flex items-center gap-2 rounded-full border border-cyan-300/40 bg-cyan-400/10 px-3 py-1 text-cyan-100">
+            <span className="inline-flex items-center gap-2 rounded-full border border-red-400/40 bg-red-500/10 px-3 py-1 text-red-100">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
               Loading nearby NOTAMs...
             </span>
           ) : notams.notConfigured ? (
-            <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-cyan-100">
+            <span className="rounded-full border border-red-400/30 bg-red-500/10 px-3 py-1 text-red-100">
               NOTAM feed not configured
             </span>
           ) : (
-            <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-cyan-100">
+            <span className="rounded-full border border-red-400/30 bg-red-500/10 px-3 py-1 text-red-100">
               {nearbyNotamCount} nearby NOTAM{nearbyNotamCount === 1 ? "" : "s"}
               {nearbyNotamCount > 0 ? ` (${mappableNotamCount} mapped)` : ""}
             </span>

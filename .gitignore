@@ -10,4 +10,5 @@ dev-dist/
 
 .vscode/
 .idea/
+.claude/
 *.tsbuildinfo

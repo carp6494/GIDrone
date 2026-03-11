@@ -14,8 +14,9 @@
 --   5. Then apply this migration:
 --        supabase db push
 
--- Ensure pg_net is available (Supabase enables it by default; this is a no-op if so)
+-- Ensure required extensions are available
 create extension if not exists pg_net schema extensions;
+create extension if not exists pg_cron schema extensions;
 
 -- Remove any previous schedule with the same name (idempotent)
 select cron.unschedule('notam-sync-15min') where exists (

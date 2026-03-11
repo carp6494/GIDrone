@@ -709,6 +709,61 @@ Deno.serve(async (request) => {
   try {
     const body = await readJsonObjectBody(request)
     const url = new URL(request.url)
+
+    // --- action=webtext: proxy FAA getWebText and return parsed HTML ---
+    const action = (body?.action as string | undefined) ?? url.searchParams.get("action") ?? ""
+    if (action === "webtext") {
+      const notamId =
+        (body?.notamId as string | undefined) ?? url.searchParams.get("notamId") ?? ""
+      if (!notamId.trim()) {
+        return jsonResponse(request, { error: "notamId is required for webtext action." }, 400)
+      }
+      const webTextUrl = `${FAA_TFR_WEBTEXT_URL}?notamId=${encodeURIComponent(
+        normalizeNotamId(notamId)
+      )}`
+      const faaRes = await withTimeoutFetch(webTextUrl, {
+        headers: { "User-Agent": FAA_USER_AGENT },
+        signal: AbortSignal.timeout(10_000),
+      })
+      const raw = await readResponsePayload(faaRes)
+      console.log("[tfr:webtext] FAA response", {
+        status: faaRes.status,
+        contentType: faaRes.headers.get("content-type"),
+        rawType: typeof raw,
+        preview: typeof raw === "string" ? raw.slice(0, 500) : JSON.stringify(raw)?.slice(0, 500),
+      })
+      if (!faaRes.ok) {
+        return jsonResponse(
+          request,
+          { error: `FAA returned ${faaRes.status}`, raw: typeof raw === "string" ? raw.slice(0, 500) : null },
+          502
+        )
+      }
+
+      // FAA returns JSON array: [ { notam_id, text: "<html string>" } ]
+      let htmlContent = ""
+      const unwrap = (obj: unknown): string => {
+        if (!obj || typeof obj !== "object") return ""
+        // Unwrap array: take first element
+        if (Array.isArray(obj)) return unwrap(obj[0])
+        if ("text" in obj) return String((obj as { text: unknown }).text)
+        return ""
+      }
+
+      if (typeof raw === "string") {
+        try {
+          htmlContent = unwrap(JSON.parse(raw)) || raw
+        } catch {
+          htmlContent = raw
+        }
+      } else {
+        htmlContent = unwrap(raw)
+      }
+
+      console.log("[tfr:webtext] extracted", { htmlLength: htmlContent.length, preview: htmlContent.slice(0, 200) })
+      return jsonResponse(request, { notamId: notamId.trim(), html: htmlContent })
+    }
+
     const lat = parseNumberLike(body?.lat) ?? parseNumberParam(url.searchParams.get("lat"))
     const lon = parseNumberLike(body?.lon) ?? parseNumberParam(url.searchParams.get("lon"))
     const radiusRaw =

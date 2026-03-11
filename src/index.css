@@ -12,6 +12,21 @@
   display: none;
 }
 
+/* Secondary TFR detail popup — wider, no clipping */
+.tfr-detail-popup .mapboxgl-popup-content {
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  border-radius: 10px;
+  overflow: visible;
+}
+.tfr-detail-popup .mapboxgl-popup-tip {
+  border-bottom-color: #0f172a;
+}
+html[data-theme="light"] .tfr-detail-popup .mapboxgl-popup-tip {
+  border-bottom-color: #ffffff;
+}
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

@@ -12,6 +12,8 @@ import {
 import { unparse } from "papaparse"
 
 import { supabase } from "../lib/supabase"
+import { processImageForUpload } from "../lib/imageProcessing"
+import { SitePhoto } from "./SitePhoto"
 
 type SiteRecord = {
   id: string
@@ -200,21 +202,24 @@ export function SiteDetail({
       setError("Sign in to upload site photos.")
       return
     }
-    if (!file.type.startsWith("image/")) {
-      setError("Please upload a valid image file.")
-      return
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setError("Image files must be 5MB or smaller.")
-      return
-    }
+
     setUploading(true)
     setError(null)
     setStatus(null)
-    const filePath = `${userId}/${currentSite.id}/photo.jpg`
+
+    let processed: File
+    try {
+      processed = await processImageForUpload(file)
+    } catch (err) {
+      setUploading(false)
+      setError(err instanceof Error ? err.message : "Image processing failed.")
+      return
+    }
+
+    const filePath = `${userId}/${currentSite.id}/photo.webp`
     const { error: uploadError } = await supabase.storage
       .from("site-photos")
-      .upload(filePath, file, { upsert: true, contentType: file.type })
+      .upload(filePath, processed, { upsert: true, contentType: "image/webp" })
 
     if (uploadError) {
       setUploading(false)
@@ -246,6 +251,33 @@ export function SiteDetail({
     setCurrentSite(updatedSite)
     setStatus("Site photo updated.")
     setUploading(false)
+    onSiteUpdated(updatedSite)
+  }
+
+  const handlePhotoRemove = async () => {
+    if (!userId) return
+    setError(null)
+    setStatus(null)
+
+    const filePath = `${userId}/${currentSite.id}/photo.webp`
+    await supabase.storage.from("site-photos").remove([filePath])
+
+    const { data, error: updateError } = await supabase
+      .from("sites")
+      .update({ photo_url: null })
+      .eq("id", currentSite.id)
+      .eq("user_id", userId)
+      .select("*")
+      .single()
+
+    if (updateError) {
+      setError(updateError.message)
+      return
+    }
+
+    const updatedSite = data as SiteRecord
+    setCurrentSite(updatedSite)
+    setStatus("Photo removed.")
     onSiteUpdated(updatedSite)
   }
 
@@ -529,36 +561,42 @@ export function SiteDetail({
                   Winner Photo
                 </h4>
                 <div className="mt-3 flex flex-col gap-3">
-                  {currentSite.photo_url ? (
-                    <img
+                  <div className="overflow-hidden rounded-2xl">
+                    <SitePhoto
                       src={currentSite.photo_url}
                       alt="Winner photo"
-                      className="h-48 w-full rounded-2xl object-cover"
+                      lat={currentSite.latitude}
+                      lng={currentSite.longitude}
                     />
-                  ) : (
-                    <div className="flex h-48 items-center justify-center rounded-2xl border border-dashed border-slate-700 text-xs text-slate-500">
-                      No winner photo uploaded.
-                    </div>
-                  )}
-                  <label className="flex cursor-pointer flex-wrap items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-700 px-4 py-3 text-xs text-slate-300 transition hover:border-emerald-400">
-                    <span className="inline-flex min-w-0 items-center gap-2 break-words">
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="flex flex-1 cursor-pointer items-center gap-2 rounded-2xl border border-dashed border-slate-700 px-4 py-3 text-xs text-slate-300 transition hover:border-emerald-400">
                       <Camera className="h-4 w-4 text-emerald-300" />
-                      {uploading ? "Uploading..." : "Upload winner photo"}
-                    </span>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0]
-                        if (file) {
-                          handlePhotoUpload(file)
-                          event.target.value = ""
-                        }
-                      }}
-                      disabled={uploading}
-                    />
-                  </label>
+                      {uploading ? "Uploading..." : "Upload site photo"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0]
+                          if (file) {
+                            handlePhotoUpload(file)
+                            event.target.value = ""
+                          }
+                        }}
+                        disabled={uploading}
+                      />
+                    </label>
+                    {currentSite.photo_url && (
+                      <button
+                        type="button"
+                        onClick={handlePhotoRemove}
+                        className="rounded-2xl border border-red-500/30 p-3 text-red-400 transition hover:bg-red-500/20"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
 

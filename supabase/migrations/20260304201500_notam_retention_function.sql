@@ -4,6 +4,7 @@ create or replace function public.prune_notam_feed(
 )
 returns integer
 language plpgsql
+set search_path = ''
 as $$
 declare
   deleted_count integer := 0;

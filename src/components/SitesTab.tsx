@@ -3,15 +3,21 @@ import {
   ArrowUpDown,
   Camera,
   Download,
+  Loader2,
   MapPin,
+  RotateCw,
+  Save,
   Search,
+  Trash2,
   Upload,
   X,
 } from "lucide-react"
 import { unparse } from "papaparse"
 
 import { supabase } from "../lib/supabase"
+import { processImageForUpload, rotateImage90 } from "../lib/imageProcessing"
 import { CsvImport } from "./CsvImport"
+import { SitePhoto } from "./SitePhoto"
 
 type SitesTabProps = {
   userId: string | null
@@ -55,6 +61,11 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
   const [detailError, setDetailError] = useState<string | null>(null)
   const [detailStatus, setDetailStatus] = useState<string | null>(null)
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const [rotatingPhoto, setRotatingPhoto] = useState(false)
+  const [noteInput, setNoteInput] = useState("")
+  const [savingNote, setSavingNote] = useState(false)
+  const [siteNotes, setSiteNotes] = useState<{ id: string; content: string; created_at: string }[]>([])
+  const [loadingNotes, setLoadingNotes] = useState(false)
 
   const refreshSites = async () => {
     if (!userId) return
@@ -97,6 +108,19 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
   useEffect(() => {
     setDetailError(null)
     setDetailStatus(null)
+    setNoteInput("")
+    setSiteNotes([])
+    if (!selectedSite) return
+    setLoadingNotes(true)
+    supabase
+      .from("site_notes")
+      .select("id, content, created_at")
+      .eq("site_id", selectedSite.id)
+      .order("created_at", { ascending: false })
+      .then(({ data }) => {
+        setSiteNotes(data ?? [])
+        setLoadingNotes(false)
+      })
   }, [selectedSite])
 
   const filteredSites = useMemo(() => {
@@ -181,25 +205,25 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
       setDetailError("Sign in to upload site photos.")
       return
     }
-    if (!file.type.startsWith("image/")) {
-      setDetailError("Please upload a valid image file.")
-      return
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      setDetailError("Image files must be 5MB or smaller.")
-      return
-    }
 
     setUploadingPhoto(true)
     setDetailError(null)
     setDetailStatus(null)
 
-    const extension = file.name.split(".").pop() || "jpg"
-    const filePath = `${userId}/${selectedSite.id}/${Date.now()}.${extension}`
+    let processed: File
+    try {
+      processed = await processImageForUpload(file)
+    } catch (err) {
+      setUploadingPhoto(false)
+      setDetailError(err instanceof Error ? err.message : "Image processing failed.")
+      return
+    }
+
+    const filePath = `${userId}/${selectedSite.id}/${Date.now()}.webp`
 
     const { error: uploadError } = await supabase.storage
       .from("site-photos")
-      .upload(filePath, file, { upsert: true, contentType: file.type })
+      .upload(filePath, processed, { upsert: true, contentType: "image/webp" })
 
     if (uploadError) {
       setUploadingPhoto(false)
@@ -236,6 +260,126 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
     setUploadingPhoto(false)
   }
 
+  const handlePhotoDelete = async () => {
+    if (!selectedSite || !userId) return
+    setDetailError(null)
+    setDetailStatus(null)
+
+    const filePath = `${userId}/${selectedSite.id}/photo.webp`
+    await supabase.storage.from("site-photos").remove([filePath])
+
+    const { data, error: updateError } = await supabase
+      .from("sites")
+      .update({ photo_url: null })
+      .eq("id", selectedSite.id)
+      .eq("user_id", userId)
+      .select("*")
+      .single()
+
+    if (updateError) {
+      setDetailError(updateError.message)
+      return
+    }
+
+    const updated = data as SiteRecord
+    setSites((prev) =>
+      prev.map((site) => (site.id === updated.id ? updated : site))
+    )
+    setSelectedSite(updated)
+    setDetailStatus("Photo removed.")
+  }
+
+  const handlePhotoRotate = async () => {
+    if (!selectedSite?.photo_url || !userId) return
+    setRotatingPhoto(true)
+    setDetailError(null)
+    setDetailStatus(null)
+
+    try {
+      const rotated = await rotateImage90(selectedSite.photo_url)
+      const filePath = `${userId}/${selectedSite.id}/photo.webp`
+
+      const { error: uploadError } = await supabase.storage
+        .from("site-photos")
+        .upload(filePath, rotated, { upsert: true, contentType: "image/webp" })
+
+      if (uploadError) {
+        setDetailError(uploadError.message)
+        setRotatingPhoto(false)
+        return
+      }
+
+      const { data: publicData } = supabase.storage
+        .from("site-photos")
+        .getPublicUrl(filePath)
+
+      const photoUrl = `${publicData.publicUrl}?t=${Date.now()}`
+
+      const { data, error: updateError } = await supabase
+        .from("sites")
+        .update({ photo_url: photoUrl })
+        .eq("id", selectedSite.id)
+        .eq("user_id", userId)
+        .select("*")
+        .single()
+
+      if (updateError) {
+        setDetailError(updateError.message)
+        setRotatingPhoto(false)
+        return
+      }
+
+      const updated = data as SiteRecord
+      setSites((prev) =>
+        prev.map((site) => (site.id === updated.id ? updated : site))
+      )
+      setSelectedSite(updated)
+      setDetailStatus("Photo rotated.")
+    } catch (err) {
+      setDetailError(err instanceof Error ? err.message : "Rotation failed.")
+    } finally {
+      setRotatingPhoto(false)
+    }
+  }
+
+  const handleAddNote = async () => {
+    if (!selectedSite || !userId || !noteInput.trim()) return
+    setSavingNote(true)
+    setDetailError(null)
+    setDetailStatus(null)
+
+    const { data, error: insertError } = await supabase
+      .from("site_notes")
+      .insert({ site_id: selectedSite.id, user_id: userId, content: noteInput.trim() })
+      .select("id, content, created_at")
+      .single()
+
+    if (insertError) {
+      setSavingNote(false)
+      setDetailError(insertError.message)
+      return
+    }
+
+    setSiteNotes((prev) => [data, ...prev])
+    setNoteInput("")
+    setDetailStatus("Note added.")
+    setSavingNote(false)
+  }
+
+  const handleDeleteNote = async (noteId: string) => {
+    const { error: deleteError } = await supabase
+      .from("site_notes")
+      .delete()
+      .eq("id", noteId)
+
+    if (deleteError) {
+      setDetailError(deleteError.message)
+      return
+    }
+
+    setSiteNotes((prev) => prev.filter((n) => n.id !== noteId))
+  }
+
   const detailFields = selectedSite
     ? [
         { label: "Site Number", value: selectedSite.site_number ?? "-" },
@@ -246,7 +390,6 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
         { label: "Structure Type", value: selectedSite.structure_type ?? "-" },
         { label: "Latitude", value: formatCoordinate(selectedSite.latitude) },
         { label: "Longitude", value: formatCoordinate(selectedSite.longitude) },
-        { label: "Notes", value: selectedSite.notes ?? "-" },
       ]
     : []
 
@@ -480,38 +623,54 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
 
             <div className="grid gap-6 px-4 py-4 sm:px-6 sm:py-6 xl:grid-cols-[1fr_1.1fr]">
               <div className="min-w-0 space-y-4">
-                <div className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70">
-                  {selectedSite.photo_url ? (
-                    <img
-                      src={selectedSite.photo_url}
-                      alt={selectedSite.site_name ?? "Site photo"}
-                      className="h-56 w-full object-cover"
+                <div className="flex overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/70">
+                  <SitePhoto
+                    src={selectedSite.photo_url}
+                    alt={selectedSite.site_name ?? "Site photo"}
+                    lat={selectedSite.latitude}
+                    lng={selectedSite.longitude}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="inline-flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-full border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200">
+                    <Camera className="h-4 w-4" />
+                    {uploadingPhoto ? "Uploading..." : "Upload"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        if (file) {
+                          handlePhotoUpload(file)
+                        }
+                        event.currentTarget.value = ""
+                      }}
+                      disabled={uploadingPhoto}
+                      className="hidden"
                     />
-                  ) : (
-                    <div className="flex h-56 items-center justify-center text-xs text-slate-500">
-                      No photo uploaded
-                    </div>
+                  </label>
+                  {selectedSite.photo_url && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handlePhotoRotate}
+                        disabled={rotatingPhoto}
+                        className="inline-flex items-center gap-2 rounded-full border border-slate-700 px-4 py-2 text-xs font-semibold text-slate-200 transition hover:border-emerald-400 hover:text-emerald-200 disabled:cursor-not-allowed disabled:border-slate-800 disabled:text-slate-500"
+                      >
+                        <RotateCw className={`h-4 w-4${rotatingPhoto ? " animate-spin" : ""}`} />
+                        Rotate
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePhotoDelete}
+                        className="inline-flex items-center gap-2 rounded-full border border-red-500/30 px-4 py-2 text-xs font-semibold text-red-400 transition hover:bg-red-500/20"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                        Delete
+                      </button>
+                    </>
                   )}
                 </div>
-                <label className="flex w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border border-dashed border-slate-700 bg-slate-950/70 px-4 py-3 text-xs text-slate-300 transition hover:border-emerald-400">
-                  <span className="flex items-center gap-2">
-                    <Camera className="h-4 w-4 text-emerald-300" />
-                    {uploadingPhoto ? "Uploading..." : "Upload site photo"}
-                  </span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0]
-                      if (file) {
-                        handlePhotoUpload(file)
-                      }
-                      event.currentTarget.value = ""
-                    }}
-                    disabled={uploadingPhoto}
-                    className="hidden"
-                  />
-                </label>
                 {detailError && (
                   <p className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-200">
                     {detailError}
@@ -540,6 +699,64 @@ export function SitesTab({ userId, onShowOnMap }: SitesTabProps) {
                           </p>
                       </div>
                     ))}
+                  </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <h4 className="text-sm font-semibold text-slate-200">
+                    Notes
+                  </h4>
+                  <div className="mt-3 flex gap-2">
+                    <textarea
+                      value={noteInput}
+                      onChange={(e) => setNoteInput(e.target.value)}
+                      rows={2}
+                      placeholder="Add a note..."
+                      className="flex-1 resize-none rounded-xl border border-slate-800 bg-slate-950/60 px-3 py-2 text-sm text-slate-200 placeholder:text-slate-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddNote}
+                      disabled={savingNote || !noteInput.trim()}
+                      className="self-end rounded-xl bg-emerald-400 px-3 py-2 text-xs font-semibold text-slate-900 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
+                    >
+                      {savingNote ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Save className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                  </div>
+                  <div className="mt-3 max-h-48 space-y-2 overflow-y-auto">
+                    {loadingNotes ? (
+                      <p className="text-xs text-slate-500">Loading notes...</p>
+                    ) : siteNotes.length ? (
+                      siteNotes.map((note) => (
+                        <div
+                          key={note.id}
+                          className="group flex items-start gap-2 rounded-xl border border-slate-800 bg-slate-900/60 px-3 py-2"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="break-words text-sm text-slate-200">
+                              {note.content}
+                            </p>
+                            <p className="mt-1 text-[10px] text-slate-500">
+                              {new Date(note.created_at).toLocaleString()}
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteNote(note.id)}
+                            className="shrink-0 rounded p-0.5 text-slate-600 opacity-0 transition hover:text-rose-400 group-hover:opacity-100"
+                            aria-label="Delete note"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-slate-500">No notes yet.</p>
+                    )}
                   </div>
                 </div>
 

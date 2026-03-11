@@ -17,3 +17,21 @@ export const fetchTfrs = async ({
     lon,
     radiusMiles,
   })
+
+export type TfrWebTextResponse = {
+  notamId: string
+  html: string
+}
+
+export const fetchTfrWebText = async (notamId: string): Promise<TfrWebTextResponse> => {
+  const res = await getFunctionJson<TfrWebTextResponse>("tfr", {
+    action: "webtext",
+    notamId,
+  })
+  console.debug("[tfrClient] webtext response", {
+    notamId,
+    htmlLength: res?.html?.length,
+    preview: res?.html?.slice(0, 200),
+  })
+  return res
+}

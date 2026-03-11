@@ -12,6 +12,8 @@ import {
 } from "lucide-react"
 
 import { supabase } from "../services/supabaseClient"
+import { processImageForUpload } from "../lib/imageProcessing"
+import { SitePhoto } from "./SitePhoto"
 
 type Site = {
   id: string
@@ -366,6 +368,12 @@ export function MySitesTab() {
     setStatus("CSV export generated.")
   }
 
+  const handlePhotoRemove = () => {
+    setForm((prev) => ({ ...prev, photoUrl: "" }))
+    setIsEditing(true)
+    setStatus("Photo removed. Save to confirm.")
+  }
+
   const handlePhotoUpload = async (file: File) => {
     if (!hasSupabaseEnv) {
       setError("Supabase env vars are missing. Configure VITE_SUPABASE_URL and KEY.")
@@ -374,11 +382,11 @@ export function MySitesTab() {
     setUploading(true)
     setError(null)
     try {
-      const fileName = file.name.replace(/\s+/g, "_")
-      const path = `${selectedSite?.id ?? "new"}/${Date.now()}_${fileName}`
+      const processed = await processImageForUpload(file)
+      const path = `${selectedSite?.id ?? "new"}/${Date.now()}.webp`
       const { error: uploadError } = await supabase.storage
         .from(SUPABASE_BUCKET)
-        .upload(path, file, { upsert: true })
+        .upload(path, processed, { upsert: true, contentType: "image/webp" })
       if (uploadError) {
         throw uploadError
       }
@@ -587,38 +595,44 @@ export function MySitesTab() {
                   <p className="text-xs uppercase tracking-[0.3em] text-slate-500">
                     Photo
                   </p>
-                  <label
-                    className={`flex cursor-pointer items-center gap-2 rounded-full border border-slate-800 px-3 py-2 text-xs uppercase tracking-[0.2em] text-slate-300 transition ${
-                      uploading ? "opacity-60" : "hover:text-white"
-                    }`}
-                  >
-                    <Camera className="h-4 w-4" />
-                    {uploading ? "Uploading" : "Upload"}
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={uploading}
-                      onChange={(event) => {
-                        const file = event.target.files?.[0]
-                        if (file) handlePhotoUpload(file)
-                        event.currentTarget.value = ""
-                      }}
-                    />
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <label
+                      className={`flex cursor-pointer items-center gap-2 rounded-full border border-slate-800 px-3 py-2 text-xs uppercase tracking-[0.2em] text-slate-300 transition ${
+                        uploading ? "opacity-60" : "hover:text-white"
+                      }`}
+                    >
+                      <Camera className="h-4 w-4" />
+                      {uploading ? "Uploading" : "Upload"}
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        disabled={uploading}
+                        onChange={(event) => {
+                          const file = event.target.files?.[0]
+                          if (file) handlePhotoUpload(file)
+                          event.currentTarget.value = ""
+                        }}
+                      />
+                    </label>
+                    {form.photoUrl && (
+                      <button
+                        type="button"
+                        onClick={handlePhotoRemove}
+                        className="rounded-full border border-red-500/30 p-2 text-red-400 transition hover:bg-red-500/20"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
                 </div>
-                <div className="mt-4 h-40 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/60">
-                  {form.photoUrl ? (
-                    <img
-                      src={form.photoUrl}
-                      alt={form.name || "Site photo"}
-                      className="h-full w-full object-cover"
-                    />
-                  ) : (
-                    <div className="flex h-full w-full items-center justify-center text-sm text-slate-500">
-                      No photo uploaded yet.
-                    </div>
-                  )}
+                <div className="mt-4 overflow-hidden rounded-2xl border border-slate-800 bg-slate-950/60">
+                  <SitePhoto
+                    src={form.photoUrl}
+                    alt={form.name || "Site photo"}
+                    lat={form.lat ? Number(form.lat) : null}
+                    lng={form.lng ? Number(form.lng) : null}
+                  />
                 </div>
                 {!hasSupabaseEnv && (
                   <p className="mt-3 text-xs text-slate-400">
