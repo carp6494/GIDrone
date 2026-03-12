@@ -3,8 +3,9 @@ import { Languages, Loader2, Map as MapIcon, RefreshCcw } from "lucide-react"
 
 import { useMetars } from "../hooks/useMetars"
 import { useNotams } from "../hooks/useNotams"
+import { useObstructions } from "../hooks/useObstructions"
 import { useTfrs } from "../hooks/useTfrs"
-import type { AviationMetar, AviationStation, NotamItem, TfrItem } from "../lib/aviation/types"
+import type { AviationMetar, AviationStation, NotamItem, ObstructionItem, TfrItem } from "../lib/aviation/types"
 import { AviationTile } from "./AviationTile"
 
 type AviationPanelProps = {
@@ -12,7 +13,19 @@ type AviationPanelProps = {
   lon: number
   onMapTfr?: (item: TfrItem) => void
   onMapNotam?: (item: NotamItem) => void
+  onMapObstruction?: (item: ObstructionItem) => void
 }
+
+const OBSTRUCTION_SORT_OPTIONS = [
+  { value: "distance", label: "Distance" },
+  { value: "height", label: "Height" },
+  { value: "type", label: "Type" },
+  { value: "lighting", label: "Lighting" },
+  { value: "marking", label: "Marking" },
+  { value: "asrn", label: "ASR" },
+] as const
+
+type ObstructionSortBy = (typeof OBSTRUCTION_SORT_OPTIONS)[number]["value"]
 
 type MetarListRow = {
   station: AviationStation
@@ -106,6 +119,35 @@ const resolveLightingLabel = (item: NotamItem) => {
 
 const asFiniteNumber = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? value : null
+
+const LIGHTING_CODE_LABELS: Record<string, string> = {
+  R: "Red",
+  D: "Dual (red/white)",
+  C: "Catenary",
+  F: "Flood",
+  H: "High intensity",
+  M: "Medium intensity",
+  S: "Strobe",
+  N: "None",
+}
+
+const formatLightingCode = (code: string | null) => {
+  if (!code) return null
+  return LIGHTING_CODE_LABELS[code.toUpperCase()] ?? code
+}
+
+const MARK_INDICATOR_LABELS: Record<string, string> = {
+  P: "Painted",
+  F: "Flag",
+  W: "White paint",
+  M: "Marked",
+  N: "None",
+}
+
+const formatMarkIndicator = (indicator: string | null) => {
+  if (!indicator) return null
+  return MARK_INDICATOR_LABELS[indicator.toUpperCase()] ?? indicator
+}
 
 const isNotamMappable = (item: NotamItem) =>
   asFiniteNumber(item.mapLat) !== null &&
@@ -210,10 +252,11 @@ function TileErrorState({ message }: { message: string }) {
   )
 }
 
-export function AviationPanel({ lat, lon, onMapTfr, onMapNotam }: AviationPanelProps) {
+export function AviationPanel({ lat, lon, onMapTfr, onMapNotam, onMapObstruction }: AviationPanelProps) {
   const isDev = import.meta.env.DEV
   const [radiusMiles, setRadiusMiles] = useState<AviationRadiusMiles>(() => readStoredRadiusMiles())
   const [translatedMetars, setTranslatedMetars] = useState<Record<string, boolean>>({})
+  const [obstructionSortBy, setObstructionSortBy] = useState<ObstructionSortBy>("distance")
 
   useEffect(() => {
     if (typeof window === "undefined") return
@@ -223,6 +266,7 @@ export function AviationPanel({ lat, lon, onMapTfr, onMapNotam }: AviationPanelP
   const metars = useMetars({ lat, lon, radiusMiles, limit: 5 })
   const tfrs = useTfrs({ lat, lon, radiusMiles })
   const notams = useNotams({ lat, lon, radiusMiles })
+  const obstructionsResult = useObstructions({ lat, lon, radiusMiles, sortBy: obstructionSortBy })
 
   const metarRows = useMemo(
     () => buildMetarRows(metars.data?.stations ?? [], metars.data?.metars ?? []),
@@ -262,7 +306,7 @@ export function AviationPanel({ lat, lon, onMapTfr, onMapNotam }: AviationPanelP
         </div>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         <AviationTile
           label="Meteorological Aerodrome Reports"
           title="METARs near you"
@@ -546,6 +590,100 @@ export function AviationPanel({ lat, lon, onMapTfr, onMapNotam }: AviationPanelP
                 ) : null}
               </div>
             )}
+          </div>
+        </AviationTile>
+
+        <AviationTile
+          label="FAA Digital Obstacle File"
+          title="Obstructions near you"
+          rightHeaderSlot={
+            <TileRefreshButton
+              onClick={obstructionsResult.refresh}
+              loading={obstructionsResult.isLoading || obstructionsResult.isRefreshing}
+              ariaLabel="Refresh obstructions"
+            />
+          }
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <p className="text-xs text-slate-400">Within {radiusMiles} mi</p>
+              <select
+                value={obstructionSortBy}
+                onChange={(e) => setObstructionSortBy(e.target.value as ObstructionSortBy)}
+                className="ml-auto rounded-full border border-slate-700 bg-slate-900/80 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-300 outline-none transition hover:border-slate-500"
+              >
+                {OBSTRUCTION_SORT_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    Sort: {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {obstructionsResult.isLoading && !obstructionsResult.data ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading nearby obstructions...
+              </div>
+            ) : obstructionsResult.error ? (
+              <TileErrorState message={obstructionsResult.error} />
+            ) : (obstructionsResult.data?.items.length ?? 0) === 0 ? (
+              <div className="rounded-xl border border-slate-800 bg-slate-950/50 p-3 text-sm text-slate-400">
+                No obstructions found in the selected radius.
+              </div>
+            ) : (
+              (obstructionsResult.data?.items ?? []).map((item) => {
+                const locationParts = [item.city, item.state].filter(Boolean).join(", ")
+                const detailBadges = [
+                  item.obstacleType ? `Type: ${item.obstacleType}` : null,
+                  item.aglHeightFt != null ? `AGL: ${Math.round(item.aglHeightFt)} ft` : null,
+                  formatLightingCode(item.lightingCode) ? `Lighting: ${formatLightingCode(item.lightingCode)}` : null,
+                  formatMarkIndicator(item.markIndicator) ? `Marking: ${formatMarkIndicator(item.markIndicator)}` : null,
+                  item.asrn ? `ASR ${item.asrn}` : null,
+                ].filter((v): v is string => Boolean(v))
+
+                return (
+                  <div
+                    key={item.id}
+                    className="rounded-xl border border-slate-800/80 bg-slate-950/60 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-white">{item.oasNumber}</p>
+                        <p className="break-words text-xs text-slate-400">
+                          {locationParts || "Unknown location"}
+                          {" | "}
+                          {item.distanceMiles.toFixed(1)} mi
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onMapObstruction?.(item)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-purple-400/60 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-purple-200 transition hover:border-purple-300 hover:text-white"
+                      >
+                        <MapIcon className="h-3 w-3" />
+                        Map
+                      </button>
+                    </div>
+                    {detailBadges.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {detailBadges.map((detail) => (
+                          <span
+                            key={detail}
+                            className="rounded-full border border-slate-700/80 bg-slate-900/70 px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.12em] text-slate-300"
+                          >
+                            {detail}
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })
+            )}
+            {obstructionsResult.data?.message ? (
+              <p className="text-xs text-slate-400">{obstructionsResult.data.message}</p>
+            ) : null}
           </div>
         </AviationTile>
       </div>

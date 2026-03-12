@@ -503,6 +503,14 @@ function AppShell() {
             })
             setActiveTab("radar")
           }}
+          onMapObstruction={(item) => {
+            setMapFocus({
+              lat: item.lat,
+              lon: item.lon,
+              name: `${item.oasNumber} | ${item.obstacleType ?? "Obstruction"} ${item.aglHeightFt ? `${Math.round(item.aglHeightFt)} ft AGL` : ""}`,
+            })
+            setActiveTab("radar")
+          }}
         />
       )
     }

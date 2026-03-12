@@ -159,3 +159,50 @@ export type TfrMapFocus = {
   bounds: BoundsTuple
   notamId: string
 }
+
+export type ObstructionItem = {
+  id: string
+  oasNumber: string
+  verificationStatus: string | null
+  state: string | null
+  city: string | null
+  lat: number
+  lon: number
+  obstacleType: string | null
+  quantity: number | null
+  aglHeightFt: number | null
+  amslHeightFt: number | null
+  lightingCode: string | null
+  horizontalAccuracy: string | null
+  verticalAccuracy: string | null
+  markIndicator: string | null
+  faaStudyNumber: string | null
+  actionCode: string | null
+  asrn: string | null
+  ownerName: string | null
+  distanceMiles: number
+}
+
+export type ObstructionFeatureProperties = {
+  id: string
+  oasNumber: string
+  obstacleType: string | null
+  aglHeightFt: number | null
+  amslHeightFt: number | null
+  lightingCode: string | null
+  markIndicator: string | null
+  city: string | null
+  state: string | null
+  asrn: string | null
+  ownerName: string | null
+  distanceMiles: number
+}
+
+export type ObstructionResponse = {
+  items: ObstructionItem[]
+  featureCollection: GeoJSON.FeatureCollection
+  fetchedAt: string
+  source: string
+  count: number
+  message?: string
+}

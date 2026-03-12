@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
-import { Layers, Loader2, MapPin, Pause, Play, Radar, Satellite, Settings, Target } from "lucide-react"
+import { Building2, Layers, Loader2, MapPin, Pause, Play, Radar, Satellite, Settings, SlidersHorizontal, Target } from "lucide-react"
 
 import { useNotams } from "../hooks/useNotams"
+import { useObstructions } from "../hooks/useObstructions"
 import { useTfrs } from "../hooks/useTfrs"
 import { fetchTfrWebText } from "../lib/aviation/tfrClient"
-import type { BoundsTuple, NotamFeatureProperties, NotamItem, TfrFeatureProperties } from "../lib/aviation/types"
+import type { BoundsTuple, NotamFeatureProperties, NotamItem, ObstructionFeatureProperties, TfrFeatureProperties } from "../lib/aviation/types"
 import type { ThemeMode } from "../lib/theme"
 
 type BaseStyleKey = "streets" | "satellite" | "hybrid"
@@ -84,6 +85,15 @@ const TFR_LINE_LAYER_ID = "tfr-zones-line"
 const NOTAM_SOURCE_ID = "notam-zones"
 const NOTAM_FILL_LAYER_ID = "notam-zones-fill"
 const NOTAM_LINE_LAYER_ID = "notam-zones-line"
+const OBSTRUCTION_SOURCE_ID = "obstruction-points"
+const OBSTRUCTION_CIRCLE_LAYER_ID = "obstruction-circles"
+const OBSTRUCTION_CLUSTER_LAYER_ID = "obstruction-clusters"
+const OBSTRUCTION_CLUSTER_COUNT_LAYER_ID = "obstruction-cluster-count"
+
+const OBSTRUCTION_TYPE_OPTIONS = [
+  "TOWER", "TANK", "STACK", "CRANE",
+  "WINDMILL", "BRIDGE", "ANTENNA",
+] as const
 
 const THEMED_STREET_STYLES: Record<ThemeMode, string> = {
   light: "mapbox://styles/mapbox/streets-v12",
@@ -248,6 +258,7 @@ const createTfrMarkerElement = () =>
     { size: 26, color: "#facc15", width: 1,   gap: "borderRightColor,borderBottomColor", anim: "gi-cw 5s linear infinite",  bg: "rgba(234,179,8,0.18)" },
     { size: 15, color: "#fde047", width: 1,   gap: "borderBottomColor",                  anim: "gi-ccw 3s linear infinite", bg: "rgba(234,179,8,0.18)" },
   ])
+
 
 const createFocusMarkerElement = () => {
   const element = document.createElement("div")
@@ -744,13 +755,216 @@ const bindNotamInteractions = (
   boundRef.current = true
 }
 
+const ensureObstructionLayer = (
+  map: mapboxgl.Map,
+  data: GeoJSON.FeatureCollection,
+  visible: boolean
+) => {
+  const vis = visible ? "visible" : "none"
+  const existingSource = map.getSource(OBSTRUCTION_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
+  if (!existingSource) {
+    map.addSource(OBSTRUCTION_SOURCE_ID, {
+      type: "geojson",
+      data,
+      cluster: true,
+      clusterMaxZoom: 13,
+      clusterRadius: 60,
+    })
+  } else {
+    existingSource.setData(data)
+  }
+
+  // Cluster circles — sized by point_count
+  if (!map.getLayer(OBSTRUCTION_CLUSTER_LAYER_ID)) {
+    map.addLayer({
+      id: OBSTRUCTION_CLUSTER_LAYER_ID,
+      type: "circle",
+      source: OBSTRUCTION_SOURCE_ID,
+      filter: ["has", "point_count"],
+      paint: {
+        "circle-color": [
+          "step", ["get", "point_count"],
+          "#c084fc",   // < 25: light purple
+          25, "#a855f7", // 25-99: purple
+          100, "#9333ea", // 100-499: deeper purple
+          500, "#7e22ce", // 500+: dark purple
+        ],
+        "circle-radius": [
+          "step", ["get", "point_count"],
+          16,        // < 25
+          25, 22,    // 25-99
+          100, 28,   // 100-499
+          500, 34,   // 500+
+        ],
+        "circle-opacity": 0.85,
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#e9d5ff",
+        "circle-stroke-opacity": 0.5,
+      },
+      layout: { visibility: vis },
+    })
+  }
+
+  // Cluster count labels
+  if (!map.getLayer(OBSTRUCTION_CLUSTER_COUNT_LAYER_ID)) {
+    map.addLayer({
+      id: OBSTRUCTION_CLUSTER_COUNT_LAYER_ID,
+      type: "symbol",
+      source: OBSTRUCTION_SOURCE_ID,
+      filter: ["has", "point_count"],
+      layout: {
+        "text-field": ["get", "point_count_abbreviated"],
+        "text-font": ["DIN Pro Medium", "Arial Unicode MS Bold"],
+        "text-size": 12,
+        visibility: vis,
+      },
+      paint: {
+        "text-color": "#ffffff",
+      },
+    })
+  }
+
+  // Unclustered individual points
+  if (!map.getLayer(OBSTRUCTION_CIRCLE_LAYER_ID)) {
+    map.addLayer({
+      id: OBSTRUCTION_CIRCLE_LAYER_ID,
+      type: "circle",
+      source: OBSTRUCTION_SOURCE_ID,
+      filter: ["!", ["has", "point_count"]],
+      paint: {
+        "circle-color": "#a855f7",
+        "circle-radius": [
+          "interpolate", ["linear"], ["zoom"],
+          10, 5,
+          14, 8,
+        ],
+        "circle-opacity": 0.85,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": "#c084fc",
+      },
+      layout: { visibility: vis },
+    })
+  }
+}
+
+const buildObstructionPopupHtml = (properties: Partial<ObstructionFeatureProperties>, theme: ThemeMode = "dark") => {
+  const title = properties.oasNumber ? escapeHtml(String(properties.oasNumber)) : "Obstruction"
+  const isDark = theme === "dark"
+  const text = isDark ? "#f1f5f9" : "#0f172a"
+
+  const locationLabel = [properties.city, properties.state]
+    .filter(Boolean)
+    .map((v) => escapeHtml(String(v)))
+    .join(", ")
+
+  const heightParts = [
+    properties.aglHeightFt != null ? `${Math.round(properties.aglHeightFt)} ft AGL` : null,
+    properties.amslHeightFt != null ? `${Math.round(properties.amslHeightFt)} ft AMSL` : null,
+  ].filter(Boolean).join(" / ")
+
+  const rows = [
+    locationLabel ? `<span style="color:${text};">${locationLabel}</span>` : "",
+    properties.obstacleType ? `<strong style="color:${text};">Type:</strong> ${escapeHtml(String(properties.obstacleType))}` : "",
+    heightParts ? `<strong style="color:${text};">Height:</strong> ${escapeHtml(heightParts)}` : "",
+    properties.lightingCode ? `<strong style="color:${text};">Lighting:</strong> ${escapeHtml(String(properties.lightingCode))}` : "",
+    properties.markIndicator ? `<strong style="color:${text};">Marking:</strong> ${escapeHtml(String(properties.markIndicator))}` : "",
+    properties.asrn ? `<strong style="color:${text};">ASR:</strong> ${escapeHtml(String(properties.asrn))}` : "",
+    properties.ownerName ? `<strong style="color:${text};">Owner:</strong> ${escapeHtml(String(properties.ownerName))}` : "",
+    properties.distanceMiles != null ? `<strong style="color:${text};">Distance:</strong> ${properties.distanceMiles.toFixed(1)} mi` : "",
+  ]
+  return buildPopupCard(theme, title, rows)
+}
+
+const bindObstructionInteractions = (
+  map: mapboxgl.Map,
+  popupRef: MutableRefObject<mapboxgl.Popup | null>,
+  boundRef: MutableRefObject<boolean>,
+  themeRef: MutableRefObject<ThemeMode>,
+  focusMarkerRef: MutableRefObject<mapboxgl.Marker | null>,
+  focusPopupRef: MutableRefObject<mapboxgl.Popup | null>,
+  focusDismissTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>
+) => {
+  if (boundRef.current) return
+
+  const handleMouseEnter = () => {
+    map.getCanvas().style.cursor = "pointer"
+  }
+
+  const handleMouseLeave = () => {
+    map.getCanvas().style.cursor = ""
+  }
+
+  // Click unclustered point → show popup
+  const handleClick = (event: mapboxgl.MapLayerMouseEvent) => {
+    dismissFocusMarker(focusMarkerRef, focusPopupRef, focusDismissTimerRef)
+    const clicked = event.features?.[0]
+    if (!clicked || !clicked.properties) return
+    const properties = clicked.properties as Partial<ObstructionFeatureProperties>
+    const html = buildObstructionPopupHtml(properties, themeRef.current)
+
+    popupRef.current?.remove()
+    popupRef.current = new mapboxgl.Popup({ offset: 14, closeButton: false, className: "site-popup" })
+      .setLngLat(event.lngLat)
+      .setHTML(html)
+      .addTo(map)
+  }
+
+  // Click cluster → zoom into it
+  const handleClusterClick = (event: mapboxgl.MapLayerMouseEvent) => {
+    const clicked = event.features?.[0]
+    if (!clicked) return
+    const clusterId = clicked.properties?.cluster_id as number | undefined
+    if (clusterId == null) return
+    const source = map.getSource(OBSTRUCTION_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
+    if (!source) return
+    source.getClusterExpansionZoom(clusterId, (err, zoom) => {
+      if (err || zoom == null) return
+      const geom = clicked.geometry as GeoJSON.Point
+      map.easeTo({ center: geom.coordinates as [number, number], zoom: zoom + 0.5 })
+    })
+  }
+
+  map.on("mouseenter", OBSTRUCTION_CIRCLE_LAYER_ID, handleMouseEnter)
+  map.on("mouseleave", OBSTRUCTION_CIRCLE_LAYER_ID, handleMouseLeave)
+  map.on("click", OBSTRUCTION_CIRCLE_LAYER_ID, handleClick)
+  map.on("mouseenter", OBSTRUCTION_CLUSTER_LAYER_ID, handleMouseEnter)
+  map.on("mouseleave", OBSTRUCTION_CLUSTER_LAYER_ID, handleMouseLeave)
+  map.on("click", OBSTRUCTION_CLUSTER_LAYER_ID, handleClusterClick)
+
+  boundRef.current = true
+}
+
+const dismissFocusMarker = (
+  focusMarkerRef: MutableRefObject<mapboxgl.Marker | null>,
+  focusPopupRef: MutableRefObject<mapboxgl.Popup | null>,
+  focusDismissTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>
+) => {
+  if (focusDismissTimerRef.current) {
+    clearTimeout(focusDismissTimerRef.current)
+    focusDismissTimerRef.current = null
+  }
+  if (focusPopupRef.current) {
+    focusPopupRef.current.remove()
+    focusPopupRef.current = null
+  }
+  if (focusMarkerRef.current) {
+    focusMarkerRef.current.remove()
+    focusMarkerRef.current = null
+  }
+}
+
 const applyFocusLocation = (
   map: mapboxgl.Map,
   focusLocation: RadarFocusLocation | undefined,
   focusMarkerRef: MutableRefObject<mapboxgl.Marker | null>,
+  focusPopupRef: MutableRefObject<mapboxgl.Popup | null>,
+  focusDismissTimerRef: MutableRefObject<ReturnType<typeof setTimeout> | null>,
   theme: ThemeMode = "dark"
 ) => {
   if (!focusLocation) return
+
+  // Clean up any previous focus marker/popup
+  dismissFocusMarker(focusMarkerRef, focusPopupRef, focusDismissTimerRef)
 
   if (isBoundsFocus(focusLocation)) {
     const [minLon, minLat, maxLon, maxLat] = focusLocation.bounds
@@ -760,10 +974,6 @@ const applyFocusLocation = (
       maxZoom: 11.5,
       duration: 900,
     })
-    if (focusMarkerRef.current) {
-      focusMarkerRef.current.remove()
-      focusMarkerRef.current = null
-    }
     return
   }
 
@@ -773,19 +983,28 @@ const applyFocusLocation = (
     zoom: 12.5,
     speed: 1.2,
   })
+
+  // Create marker without .setPopup() so the marker wrapper doesn't intercept clicks
+  focusMarkerRef.current = new mapboxgl.Marker({
+    element: createFocusMarkerElement(),
+  })
+    .setLngLat([lon, lat])
+    .addTo(map)
+
+  // Show popup independently — not attached to the marker
   const popupHtml = buildPopupCard(theme, escapeHtml(name ?? "Site"), ["Focused site"])
-  if (!focusMarkerRef.current) {
-    focusMarkerRef.current = new mapboxgl.Marker({
-      element: createFocusMarkerElement(),
-    })
-      .setLngLat([lon, lat])
-      .setPopup(new mapboxgl.Popup({ offset: 16, closeButton: false, className: "site-popup" }).setHTML(popupHtml))
-      .addTo(map)
-  } else {
-    focusMarkerRef.current
-      .setLngLat([lon, lat])
-      .setPopup(new mapboxgl.Popup({ offset: 16, closeButton: false, className: "site-popup" }).setHTML(popupHtml))
-  }
+  focusPopupRef.current = new mapboxgl.Popup({ offset: 16, closeButton: false, className: "site-popup" })
+    .setLngLat([lon, lat])
+    .setHTML(popupHtml)
+    .addTo(map)
+
+  // Auto-dismiss popup after 4 seconds (marker stays until map click)
+  focusDismissTimerRef.current = setTimeout(() => {
+    if (focusPopupRef.current) {
+      focusPopupRef.current.remove()
+      focusPopupRef.current = null
+    }
+  }, 4000)
 }
 
 /** Renders FAA TFR detail HTML with dark-mode-friendly styling */
@@ -863,14 +1082,18 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   const notamMarkersRef = useRef<mapboxgl.Marker[]>([])
   const tfrMarkersRef = useRef<mapboxgl.Marker[]>([])
   const focusMarkerRef = useRef<mapboxgl.Marker | null>(null)
+  const focusPopupRef = useRef<mapboxgl.Popup | null>(null)
+  const focusDismissTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const themeRef = useRef<ThemeMode>(theme)
   const lastDefaultCenterRef = useRef<{ lat: number; lon: number } | null>(null)
   const tfrPopupRef = useRef<mapboxgl.Popup | null>(null)
   const notamPopupRef = useRef<mapboxgl.Popup | null>(null)
+  const obstructionPopupRef = useRef<mapboxgl.Popup | null>(null)
   const detailPopupRef = useRef<mapboxgl.Popup | null>(null)
   const didRunInitialStyleEffectRef = useRef(false)
   const tfrInteractionsBoundRef = useRef(false)
   const notamInteractionsBoundRef = useRef(false)
+  const obstructionInteractionsBoundRef = useRef(false)
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const moveQueryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const rafRef = useRef<number | null>(null)
@@ -889,6 +1112,19 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   const [showTfr, setShowTfr] = useState(() => localStorage.getItem("gi-drone:radar:showTfr") !== "false")
   const [showNotam, setShowNotam] = useState(() => localStorage.getItem("gi-drone:radar:showNotam") !== "false")
   const [showSites, setShowSites] = useState(() => localStorage.getItem("gi-drone:radar:showSites") !== "false")
+  const [showObstructions, setShowObstructions] = useState(() => localStorage.getItem("gi-drone:radar:showObstructions") !== "false")
+  const [showObstructionFilter, setShowObstructionFilter] = useState(false)
+  const obstructionFilterRef = useRef<HTMLDivElement | null>(null)
+  const [obstructionMinHeight, setObstructionMinHeight] = useState(() => {
+    const v = Number.parseInt(localStorage.getItem("gi-drone:radar:obstructionMinHeight") ?? "", 10)
+    return Number.isNaN(v) ? 0 : v
+  })
+  const [obstructionTypeFilter, setObstructionTypeFilter] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("gi-drone:radar:obstructionTypeFilter")
+      return raw ? JSON.parse(raw) : []
+    } catch { return [] }
+  })
   const [mapLoaded, setMapLoaded] = useState(false)
   const [rvFrames, setRvFrames] = useState<RainViewerFrame[]>([])
   const [currentFrameIdx, setCurrentFrameIdx] = useState(0)
@@ -983,6 +1219,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     lat: DEFAULT_CENTER[1],
     lon: DEFAULT_CENTER[0],
   }))
+  const [mapQueryZoom, setMapQueryZoom] = useState(9)
 
   // When focusLocation or defaultCenter changes, snap the query center to match
   useEffect(() => {
@@ -999,13 +1236,32 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     lon: mapQueryCenter.lon,
     radiusMiles: 250,
   })
+  // Obstructions are extremely dense — scale query radius to zoom so we don't
+  // fetch 1000 results all packed into one small area when zoomed out.
+  const obstructionRadius = useMemo(() => {
+    if (mapQueryZoom >= 12) return 25
+    if (mapQueryZoom >= 10) return 50
+    if (mapQueryZoom >= 8) return 100
+    return 150
+  }, [mapQueryZoom])
+
+  const obstructionsResult = useObstructions({
+    lat: mapQueryCenter.lat,
+    lon: mapQueryCenter.lon,
+    radiusMiles: obstructionRadius,
+    sortBy: "distance",
+    minHeight: obstructionMinHeight || undefined,
+    types: obstructionTypeFilter.length > 0 ? obstructionTypeFilter : undefined,
+  })
   const tfrGeoJson = tfrs.data?.featureCollection ?? EMPTY_TFR_DATA
   const notamItems = Array.isArray(notams.data?.items) ? notams.data.items : []
   const notamGeoJson = useMemo(() => buildNotamFeatureCollection(notamItems), [notamItems])
+  const obstructionGeoJson = obstructionsResult.data?.featureCollection ?? EMPTY_TFR_DATA
   const hasTfrFeatures = tfrGeoJson.features.length > 0
   const nearbyTfrCount = tfrs.data?.items.length ?? 0
   const mappableNotamCount = notamGeoJson.features.length
   const nearbyNotamCount = notamItems.length
+  const nearbyObstructionCount = obstructionsResult.data?.items.length ?? 0
   const baseStyleOptions = useMemo(
     () =>
       (Object.keys(BASE_STYLES) as BaseStyleKey[]).map((key) => ({
@@ -1051,11 +1307,16 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     bindTfrInteractions(map, tfrPopupRef, tfrInteractionsBoundRef, themeRef)
     ensureNotamLayer(map, notamGeoJson, showNotam)
     bindNotamInteractions(map, notamPopupRef, notamInteractionsBoundRef, themeRef)
+    ensureObstructionLayer(map, obstructionGeoJson, showObstructions)
+    bindObstructionInteractions(map, obstructionPopupRef, obstructionInteractionsBoundRef, themeRef, focusMarkerRef, focusPopupRef, focusDismissTimerRef)
     syncWeatherOverlay()
     setLayerVisibility(TFR_FILL_LAYER_ID, showTfr)
     setLayerVisibility(TFR_LINE_LAYER_ID, showTfr)
     setLayerVisibility(NOTAM_FILL_LAYER_ID, showNotam)
     setLayerVisibility(NOTAM_LINE_LAYER_ID, showNotam)
+    setLayerVisibility(OBSTRUCTION_CIRCLE_LAYER_ID, showObstructions)
+    setLayerVisibility(OBSTRUCTION_CLUSTER_LAYER_ID, showObstructions)
+    setLayerVisibility(OBSTRUCTION_CLUSTER_COUNT_LAYER_ID, showObstructions)
     syncNotamMarkers()
     syncTfrMarkers()
   }
@@ -1112,7 +1373,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     sites.forEach((site) => {
       const el = createMarkerElement()
       el.addEventListener("click", () => {
-        applyFocusLocation(map, { lat: site.lat, lon: site.lon, name: site.name }, focusMarkerRef, theme)
+        applyFocusLocation(map, { lat: site.lat, lon: site.lon, name: site.name }, focusMarkerRef, focusPopupRef, focusDismissTimerRef, theme)
       })
       const marker = new mapboxgl.Marker({ element: el })
         .setLngLat([site.lon, site.lat])
@@ -1153,18 +1414,25 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
 
     map.on("moveend", () => {
       const c = map.getCenter()
+      const z = map.getZoom()
       localStorage.setItem(RADAR_CENTER_KEY, JSON.stringify([c.lng, c.lat]))
       if (moveQueryTimerRef.current) clearTimeout(moveQueryTimerRef.current)
       moveQueryTimerRef.current = setTimeout(() => {
         setMapQueryCenter({ lat: c.lat, lon: c.lng })
+        setMapQueryZoom(z)
       }, 1500)
+    })
+
+    // Dismiss focus marker on any map canvas click
+    map.on("click", () => {
+      dismissFocusMarker(focusMarkerRef, focusPopupRef, focusDismissTimerRef)
     })
 
     map.on("load", () => {
       setMapLoaded(true)
       syncOverlays()
       syncMarkers()
-      applyFocusLocation(map, focusLocation, focusMarkerRef, theme)
+      applyFocusLocation(map, focusLocation, focusMarkerRef, focusPopupRef, focusDismissTimerRef, theme)
     })
 
     return () => {
@@ -1178,9 +1446,9 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
       notamMarkersRef.current = []
       tfrMarkersRef.current.forEach((m) => m.remove())
       tfrMarkersRef.current = []
+      dismissFocusMarker(focusMarkerRef, focusPopupRef, focusDismissTimerRef)
       map.remove()
       mapRef.current = null
-      focusMarkerRef.current = null
       layersAddedRef.current = false
       setMapLoaded(false)
       didRunInitialStyleEffectRef.current = false
@@ -1221,7 +1489,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   // Ensure layers exist and data is current
   useEffect(() => {
     syncOverlays()
-  }, [tfrGeoJson, notamGeoJson])
+  }, [tfrGeoJson, notamGeoJson, obstructionGeoJson])
 
   // Dedicated visibility toggles
   useEffect(() => {
@@ -1237,6 +1505,12 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   }, [showNotam, mapLoaded])
 
   useEffect(() => {
+    setLayerVisibility(OBSTRUCTION_CIRCLE_LAYER_ID, showObstructions)
+    setLayerVisibility(OBSTRUCTION_CLUSTER_LAYER_ID, showObstructions)
+    setLayerVisibility(OBSTRUCTION_CLUSTER_COUNT_LAYER_ID, showObstructions)
+  }, [showObstructions, mapLoaded])
+
+  useEffect(() => {
     syncWeatherOverlay()
   }, [showWeather, mapLoaded])
 
@@ -1248,7 +1522,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   useEffect(() => {
     const map = mapRef.current
     if (!map || !focusLocation) return
-    applyFocusLocation(map, focusLocation, focusMarkerRef, theme)
+    applyFocusLocation(map, focusLocation, focusMarkerRef, focusPopupRef, focusDismissTimerRef, theme)
   }, [focusLocation])
 
   useEffect(() => {
@@ -1287,7 +1561,22 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   useEffect(() => { localStorage.setItem("gi-drone:radar:showTfr", String(showTfr)) }, [showTfr])
   useEffect(() => { localStorage.setItem("gi-drone:radar:showNotam", String(showNotam)) }, [showNotam])
   useEffect(() => { localStorage.setItem("gi-drone:radar:showSites", String(showSites)) }, [showSites])
+  useEffect(() => { localStorage.setItem("gi-drone:radar:showObstructions", String(showObstructions)) }, [showObstructions])
+  useEffect(() => { localStorage.setItem("gi-drone:radar:obstructionMinHeight", String(obstructionMinHeight)) }, [obstructionMinHeight])
+  useEffect(() => { localStorage.setItem("gi-drone:radar:obstructionTypeFilter", JSON.stringify(obstructionTypeFilter)) }, [obstructionTypeFilter])
   useEffect(() => { localStorage.setItem("gi-drone:radar:opacity", String(radarOpacity)) }, [radarOpacity])
+
+  // Close obstruction filter dropdown on click-outside
+  useEffect(() => {
+    if (!showObstructionFilter) return
+    const handler = (e: MouseEvent) => {
+      if (obstructionFilterRef.current && !obstructionFilterRef.current.contains(e.target as Node)) {
+        setShowObstructionFilter(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showObstructionFilter])
 
   // Fetch RainViewer frames on mount
   useEffect(() => {
@@ -1469,6 +1758,99 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
             <MapPin className="mr-2 inline h-3 w-3" />
             My Sites
           </button>
+          {/* Obstructions split button — left toggles layer, right opens filter dropdown */}
+          <div ref={obstructionFilterRef} className="pointer-events-auto relative">
+            <span className="inline-flex items-stretch">
+              <button
+                type="button"
+                onClick={() => setShowObstructions((prev) => !prev)}
+                className={`rounded-l-full border py-1 pl-3 pr-2 transition ${
+                  showObstructions
+                    ? "border-purple-400/70 bg-purple-400/15 text-purple-200"
+                    : "border-slate-800 text-slate-400 hover:text-white"
+                }`}
+              >
+                <Building2 className="mr-1.5 inline h-3 w-3" />
+                Obstructions
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowObstructionFilter((prev) => !prev)}
+                className={`rounded-r-full border border-l-0 py-1 pl-1.5 pr-2.5 transition ${
+                  showObstructionFilter
+                    ? "border-purple-400/70 bg-purple-500/25 text-purple-200"
+                    : showObstructions
+                      ? "border-purple-400/70 bg-purple-400/15 text-purple-300 hover:bg-purple-500/25"
+                      : "border-slate-800 text-slate-400 hover:text-white"
+                }`}
+                aria-label="Obstruction filters"
+              >
+                <SlidersHorizontal className="h-3 w-3" />
+              </button>
+            </span>
+
+            {/* Filter dropdown */}
+            {showObstructionFilter && (
+              <div className="absolute bottom-full left-full z-50 mb-1 ml-1 w-64 rounded-xl border border-purple-500/30 bg-slate-900/95 p-3 shadow-xl shadow-black/40 backdrop-blur">
+                {/* Min Height */}
+                <div className="mb-3">
+                  <label className="mb-1 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Min Height (ft)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={2000}
+                    step={50}
+                    value={obstructionMinHeight || ""}
+                    onChange={(e) => setObstructionMinHeight(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-[11px] text-slate-300 outline-none"
+                    placeholder="0"
+                  />
+                </div>
+
+                {/* Type checkboxes */}
+                <div className="mb-3">
+                  <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Types</label>
+                  <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+                    {OBSTRUCTION_TYPE_OPTIONS.map((t) => {
+                      const checked = obstructionTypeFilter.includes(t)
+                      return (
+                        <label
+                          key={t}
+                          className="flex cursor-pointer items-center gap-1.5 rounded px-1 py-0.5 text-[11px] text-slate-300 transition hover:bg-slate-800"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={() =>
+                              setObstructionTypeFilter((prev) =>
+                                checked ? prev.filter((v) => v !== t) : [...prev, t]
+                              )
+                            }
+                            className="h-3 w-3 rounded border-slate-600 bg-slate-800 text-purple-500 accent-purple-500"
+                          />
+                          {t}
+                        </label>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {/* Clear */}
+                {(obstructionMinHeight > 0 || obstructionTypeFilter.length > 0) && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setObstructionMinHeight(0)
+                      setObstructionTypeFilter([])
+                    }}
+                    className="w-full rounded-lg border border-purple-500/30 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-purple-400 transition hover:border-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+                  >
+                    Clear Filters
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
 
           {/* Radar animation controls — inline between My Sites and Settings on wide, own row on narrow */}
           <div className="order-last flex w-full shrink-0 items-center gap-2 sm:order-none sm:w-auto">
@@ -1608,9 +1990,24 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
               {nearbyNotamCount > 0 ? ` (${mappableNotamCount} mapped)` : ""}
             </span>
           )}
+          {obstructionsResult.isLoading || obstructionsResult.isRefreshing ? (
+            <span className="inline-flex items-center gap-2 rounded-full border border-purple-400/40 bg-purple-400/10 px-3 py-1 text-purple-200">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Loading obstructions...
+            </span>
+          ) : (
+            <span className="rounded-full border border-purple-400/30 bg-purple-400/10 px-3 py-1 text-purple-200">
+              {nearbyObstructionCount} obstruction{nearbyObstructionCount === 1 ? "" : "s"}
+            </span>
+          )}
           {tfrs.error ? (
             <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
               {tfrs.error}
+            </span>
+          ) : null}
+          {obstructionsResult.error ? (
+            <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
+              {obstructionsResult.error}
             </span>
           ) : null}
           {notams.error ? (

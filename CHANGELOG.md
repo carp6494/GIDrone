@@ -7,6 +7,51 @@ and this project adheres to Semantic Versioning.
 
 ---
 
+## [0.3.0] - 2026-03-12
+
+### Added
+- **FAA Obstruction Integration** — full pipeline from FAA Digital Obstacle File (DOF) to map.
+  - Supabase migration for `obstructions` table with spatial indexes and RLS.
+  - Edge function for spatial queries (bounding-box + haversine, sortBy, minHeight, types filters).
+  - Edge function for DOF sync (backup; replaced by local script due to free-tier WORKER_LIMIT).
+  - `scripts/sync-obstructions.mjs` — downloads FAA Daily DOF CSV ZIP, parses and upserts to Supabase in batches. Filters out SIGN, TREE, BLDG, POLE types and dismantled structures.
+  - GitHub Actions workflow for daily sync at 07:00 UTC.
+- **RadarTab**: Mapbox native clustering for obstruction points (purple circles), click-to-zoom clusters, click popups on individual points.
+- **RadarTab**: split-button Obstructions toggle with filter icon dropdown — checkbox type filters, min height input. Dropdown positioned above/right to avoid clipping.
+- **AviationPanel**: obstruction tile with cards and MAP button to fly to location on RadarTab.
+- **ConditionsTab**: obstruction summary widget (count, tallest, lit/unlit breakdown).
+- Frontend client (`obstructionClient.ts`), hook (`useObstructions.ts`), and types (`ObstructionItem`, `ObstructionResponse`, `ObstructionFeatureProperties`).
+
+### Changed
+- Obstruction sync excludes non-drone-relevant types (SIGN, TREE, BLDG, POLE) and dismantled structures (action_code=D) to reduce data volume.
+- Removed dead code: unused `_createObstructionMarkerElement`, `obstructionMarkersRef`, and commented-out `syncObstructionMarkers` block.
+- Removed Sort By from obstruction filter dropdown (hardcoded to distance).
+
+### Fixed
+- Focus marker popup no longer blocks clicking other map markers — auto-dismisses after 4s, cleared on any map click.
+
+## [0.2.9] - 2026-03-11
+
+### Added
+- Site photos feature with upload/display support.
+- GitHub Actions workflow for daily FAA obstruction sync (CI scaffolding).
+
+### Changed
+- RLS security improvements across Supabase tables.
+- TFR and radar display improvements.
+
+## [0.2.8] - 2026-03-08
+
+### Added
+- Radar morph system with multi-layer opacity transitions.
+- OpenWeatherMap tile integration for RadarTab.
+- Live NOTAM/TFR pan — queries update as map moves.
+- NOTAM sync backend edge function (blocked on NMS-API access).
+
+### Changed
+- RainViewer integration refactored from dual-slot interpolation to multi-layer morph.
+- RadarTab simplified from animation pipeline to single OWM tile layer.
+
 ## [0.2.7] - 2026-03-04
 
 ### Added

@@ -36,6 +36,7 @@ import {
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
 
+import { useObstructions } from "../hooks/useObstructions"
 import type { Coordinates } from "../lib/location/types"
 import type { ThemeMode } from "../lib/theme"
 import {
@@ -2698,6 +2699,13 @@ export function ConditionsTab({
   const [showTfrs, setShowTfrs] = useState(false)
   const [selectedDayIndex, setSelectedDayIndex] = useState<number | null>(null)
 
+  const obstructions = useObstructions({
+    lat: activeCoords.lat,
+    lon: activeCoords.lon,
+    radiusMiles: 10,
+    enabled: !!activeCoords,
+  })
+
   const lastUpdatedAt = getLastWeatherFetchTimestamp()
   const hasLastUpdated = typeof lastUpdatedAt === "number"
   const lastUpdatedLabel = lastUpdatedAt
@@ -3589,6 +3597,36 @@ export function ConditionsTab({
               <p className="max-w-2xl text-sm leading-relaxed text-slate-300">
                 {weatherBriefing}
               </p>
+              {obstructions.data && obstructions.data.items.length > 0 && (() => {
+                const items = obstructions.data.items
+                const count = items.length
+                const tallest = items.reduce((max, item) =>
+                  (item.aglHeightFt ?? 0) > (max.aglHeightFt ?? 0) ? item : max, items[0])
+                const litCount = items.filter((i) => i.lightingCode && i.lightingCode !== "N").length
+                const unlitCount = count - litCount
+                return (
+                  <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900/60 p-3">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.35em] text-slate-500">
+                      Nearby Obstructions
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-300">
+                      <span>
+                        <span className="font-semibold text-white">{count}</span> within 10 mi
+                      </span>
+                      {tallest.aglHeightFt != null && (
+                        <span>
+                          Tallest: <span className="font-semibold text-white">{Math.round(tallest.aglHeightFt)} ft</span>
+                          {tallest.obstacleType ? ` (${tallest.obstacleType})` : ""}
+                        </span>
+                      )}
+                      <span>
+                        <span className="font-semibold text-white">{litCount}</span> lit /{" "}
+                        <span className="font-semibold text-white">{unlitCount}</span> unlit
+                      </span>
+                    </div>
+                  </div>
+                )
+              })()}
             </div>
             <RadarSnapshotPanel
               lat={activeCoords.lat}
