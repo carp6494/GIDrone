@@ -847,6 +847,14 @@ const ensureObstructionLayer = (
   }
 }
 
+const LIGHTING_CODE_LABELS: Record<string, string> = {
+  R: "Red", D: "Dual (red/white)", C: "Catenary", F: "Flood",
+  H: "High intensity", M: "Medium intensity", S: "Strobe", N: "None",
+}
+const MARK_INDICATOR_LABELS: Record<string, string> = {
+  P: "Painted", F: "Flag", W: "White paint", M: "Marked", N: "None",
+}
+
 const buildObstructionPopupHtml = (properties: Partial<ObstructionFeatureProperties>, theme: ThemeMode = "dark") => {
   const title = properties.oasNumber ? escapeHtml(String(properties.oasNumber)) : "Obstruction"
   const isDark = theme === "dark"
@@ -866,8 +874,8 @@ const buildObstructionPopupHtml = (properties: Partial<ObstructionFeaturePropert
     locationLabel ? `<span style="color:${text};">${locationLabel}</span>` : "",
     properties.obstacleType ? `<strong style="color:${text};">Type:</strong> ${escapeHtml(String(properties.obstacleType))}` : "",
     heightParts ? `<strong style="color:${text};">Height:</strong> ${escapeHtml(heightParts)}` : "",
-    properties.lightingCode ? `<strong style="color:${text};">Lighting:</strong> ${escapeHtml(String(properties.lightingCode))}` : "",
-    properties.markIndicator ? `<strong style="color:${text};">Marking:</strong> ${escapeHtml(String(properties.markIndicator))}` : "",
+    properties.lightingCode ? `<strong style="color:${text};">Lighting:</strong> ${escapeHtml(LIGHTING_CODE_LABELS[String(properties.lightingCode).toUpperCase()] ?? String(properties.lightingCode))}` : "",
+    properties.markIndicator ? `<strong style="color:${text};">Marking:</strong> ${escapeHtml(MARK_INDICATOR_LABELS[String(properties.markIndicator).toUpperCase()] ?? String(properties.markIndicator))}` : "",
     properties.asrn ? `<strong style="color:${text};">ASR:</strong> ${escapeHtml(String(properties.asrn))}` : "",
     properties.ownerName ? `<strong style="color:${text};">Owner:</strong> ${escapeHtml(String(properties.ownerName))}` : "",
     properties.distanceMiles != null ? `<strong style="color:${text};">Distance:</strong> ${properties.distanceMiles.toFixed(1)} mi` : "",
@@ -1115,9 +1123,12 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   const [showObstructions, setShowObstructions] = useState(() => localStorage.getItem("gi-drone:radar:showObstructions") !== "false")
   const [showObstructionFilter, setShowObstructionFilter] = useState(false)
   const obstructionFilterRef = useRef<HTMLDivElement | null>(null)
-  const [obstructionMinHeight, setObstructionMinHeight] = useState(() => {
-    const v = Number.parseInt(localStorage.getItem("gi-drone:radar:obstructionMinHeight") ?? "", 10)
-    return Number.isNaN(v) ? 0 : v
+  // Draft filter state — staged locally until "Apply" is clicked
+  const [draftTypeFilter, setDraftTypeFilter] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("gi-drone:radar:obstructionTypeFilter")
+      return raw ? JSON.parse(raw) : []
+    } catch { return [] }
   })
   const [obstructionTypeFilter, setObstructionTypeFilter] = useState<string[]>(() => {
     try {
@@ -1250,7 +1261,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     lon: mapQueryCenter.lon,
     radiusMiles: obstructionRadius,
     sortBy: "distance",
-    minHeight: obstructionMinHeight || undefined,
+    minHeight: undefined,
     types: obstructionTypeFilter.length > 0 ? obstructionTypeFilter : undefined,
   })
   const tfrGeoJson = tfrs.data?.featureCollection ?? EMPTY_TFR_DATA
@@ -1562,7 +1573,6 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   useEffect(() => { localStorage.setItem("gi-drone:radar:showNotam", String(showNotam)) }, [showNotam])
   useEffect(() => { localStorage.setItem("gi-drone:radar:showSites", String(showSites)) }, [showSites])
   useEffect(() => { localStorage.setItem("gi-drone:radar:showObstructions", String(showObstructions)) }, [showObstructions])
-  useEffect(() => { localStorage.setItem("gi-drone:radar:obstructionMinHeight", String(obstructionMinHeight)) }, [obstructionMinHeight])
   useEffect(() => { localStorage.setItem("gi-drone:radar:obstructionTypeFilter", JSON.stringify(obstructionTypeFilter)) }, [obstructionTypeFilter])
   useEffect(() => { localStorage.setItem("gi-drone:radar:opacity", String(radarOpacity)) }, [radarOpacity])
 
@@ -1775,7 +1785,15 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
               </button>
               <button
                 type="button"
-                onClick={() => setShowObstructionFilter((prev) => !prev)}
+                onClick={() => {
+                  setShowObstructionFilter((prev) => {
+                    if (!prev) {
+                      // Sync draft to applied state when opening
+                      setDraftTypeFilter(obstructionTypeFilter)
+                    }
+                    return !prev
+                  })
+                }}
                 className={`rounded-r-full border border-l-0 py-1 pl-1.5 pr-2.5 transition ${
                   showObstructionFilter
                     ? "border-purple-400/70 bg-purple-500/25 text-purple-200"
@@ -1792,27 +1810,12 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
             {/* Filter dropdown */}
             {showObstructionFilter && (
               <div className="absolute bottom-full left-full z-50 mb-1 ml-1 w-64 rounded-xl border border-purple-500/30 bg-slate-900/95 p-3 shadow-xl shadow-black/40 backdrop-blur">
-                {/* Min Height */}
-                <div className="mb-3">
-                  <label className="mb-1 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Min Height (ft)</label>
-                  <input
-                    type="number"
-                    min={0}
-                    max={2000}
-                    step={50}
-                    value={obstructionMinHeight || ""}
-                    onChange={(e) => setObstructionMinHeight(Math.max(0, Number(e.target.value) || 0))}
-                    className="w-full rounded-lg border border-slate-700 bg-slate-800/80 px-2.5 py-1.5 text-[11px] text-slate-300 outline-none"
-                    placeholder="0"
-                  />
-                </div>
-
                 {/* Type checkboxes */}
                 <div className="mb-3">
                   <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Types</label>
                   <div className="grid grid-cols-2 gap-x-2 gap-y-1">
                     {OBSTRUCTION_TYPE_OPTIONS.map((t) => {
-                      const checked = obstructionTypeFilter.includes(t)
+                      const checked = draftTypeFilter.includes(t)
                       return (
                         <label
                           key={t}
@@ -1822,7 +1825,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
                             type="checkbox"
                             checked={checked}
                             onChange={() =>
-                              setObstructionTypeFilter((prev) =>
+                              setDraftTypeFilter((prev) =>
                                 checked ? prev.filter((v) => v !== t) : [...prev, t]
                               )
                             }
@@ -1835,19 +1838,32 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
                   </div>
                 </div>
 
-                {/* Clear */}
-                {(obstructionMinHeight > 0 || obstructionTypeFilter.length > 0) && (
+                {/* Apply + Clear */}
+                <div className="flex gap-2">
                   <button
                     type="button"
                     onClick={() => {
-                      setObstructionMinHeight(0)
-                      setObstructionTypeFilter([])
+                      setObstructionTypeFilter(draftTypeFilter)
+                      setShowObstructionFilter(false)
                     }}
-                    className="w-full rounded-lg border border-purple-500/30 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-purple-400 transition hover:border-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+                    className="flex-1 rounded-lg bg-purple-600/80 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-white transition hover:bg-purple-500"
                   >
-                    Clear Filters
+                    Apply
                   </button>
-                )}
+                  {draftTypeFilter.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDraftTypeFilter([])
+                        setObstructionTypeFilter([])
+                        setShowObstructionFilter(false)
+                      }}
+                      className="flex-1 rounded-lg border border-purple-500/30 py-1 text-[10px] font-semibold uppercase tracking-[0.15em] text-purple-400 transition hover:border-purple-400 hover:bg-purple-500/10 hover:text-purple-300"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
               </div>
             )}
           </div>

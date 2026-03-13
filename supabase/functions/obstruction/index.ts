@@ -151,6 +151,8 @@ type SortFn = (a: ObstructionItem, b: ObstructionItem) => number
 const SORT_FUNCTIONS: Record<string, SortFn> = {
   distance: (a, b) => a.distanceMiles - b.distanceMiles,
   height: (a, b) => (b.aglHeightFt ?? 0) - (a.aglHeightFt ?? 0),
+  height_asc: (a, b) => (a.aglHeightFt ?? 0) - (b.aglHeightFt ?? 0),
+  height_desc: (a, b) => (b.aglHeightFt ?? 0) - (a.aglHeightFt ?? 0),
   type: (a, b) => (a.obstacleType ?? "").localeCompare(b.obstacleType ?? ""),
   lighting: (a, b) => (a.lightingCode ?? "").localeCompare(b.lightingCode ?? ""),
   marking: (a, b) => (a.markIndicator ?? "").localeCompare(b.markIndicator ?? ""),

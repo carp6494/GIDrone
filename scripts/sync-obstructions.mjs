@@ -222,6 +222,9 @@ function parseRow(fields, colMap, nowIso) {
   const actionCode = trimOrNull(col(fields, colMap.action))
   if (actionCode === "D") return null
 
+  const lightingCode = trimOrNull(col(fields, colMap.lighting))
+  if (!lightingCode || lightingCode === "N") return null
+
   return {
     id,
     oas_number: id,
@@ -235,7 +238,7 @@ function parseRow(fields, colMap, nowIso) {
     quantity: pInt(col(fields, colMap.quantity)),
     agl_height_ft: aglHeight,
     amsl_height_ft: pFloat(col(fields, colMap.amsl)),
-    lighting_code: trimOrNull(col(fields, colMap.lighting)),
+    lighting_code: lightingCode,
     horizontal_accuracy: trimOrNull(col(fields, colMap.accuracy)),
     vertical_accuracy: null,
     mark_indicator: trimOrNull(col(fields, colMap.markIndicator)),
@@ -382,6 +385,7 @@ async function main() {
   console.log(`  Min AGL: ${MIN_AGL_HEIGHT_FT} ft`)
   console.log(`  Excluded types: ${[...EXCLUDED_TYPES].join(", ")}`)
   console.log(`  Excluded action codes: D (dismantled)`)
+  console.log(`  Lighting filter: lit structures only (excludes N and null)`)
 }
 
 main().catch((err) => {

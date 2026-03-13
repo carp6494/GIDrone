@@ -18,7 +18,8 @@ type AviationPanelProps = {
 
 const OBSTRUCTION_SORT_OPTIONS = [
   { value: "distance", label: "Distance" },
-  { value: "height", label: "Height" },
+  { value: "height_desc", label: "Height ↓" },
+  { value: "height_asc", label: "Height ↑" },
   { value: "type", label: "Type" },
   { value: "lighting", label: "Lighting" },
   { value: "marking", label: "Marking" },

@@ -241,6 +241,9 @@ const parseRow = (
   const actionCode = trimOrNull(col(fields, colMap.action))
   if (actionCode === "D") return null
 
+  const lightingCode = trimOrNull(col(fields, colMap.lighting))
+  if (!lightingCode || lightingCode === "N") return null
+
   return {
     id,
     oas_number: id,
@@ -254,7 +257,7 @@ const parseRow = (
     quantity: parseInt(col(fields, colMap.quantity)),
     agl_height_ft: aglHeight,
     amsl_height_ft: parseFloat(col(fields, colMap.amsl)),
-    lighting_code: trimOrNull(col(fields, colMap.lighting)),
+    lighting_code: lightingCode,
     horizontal_accuracy: trimOrNull(col(fields, colMap.accuracy)),
     vertical_accuracy: null,
     mark_indicator: trimOrNull(col(fields, colMap.markIndicator)),
