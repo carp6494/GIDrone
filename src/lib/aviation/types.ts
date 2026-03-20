@@ -206,3 +206,28 @@ export type ObstructionResponse = {
   count: number
   message?: string
 }
+
+export type HeatmapGridCell = {
+  lat: number
+  lon: number
+  temperatureF: number | null
+  windSpeedMph: number | null
+  windGustMph: number | null
+  windDirection: string | null
+  visibilityMiles: number | null
+  precipitationProbability: number | null
+  humidity: number | null
+  shortForecast: string | null
+  cloudCover: number | null
+}
+
+export type HeatmapWeatherResponse = {
+  stateCode: string
+  grid: HeatmapGridCell[]
+  cellSizeDeg: number
+  fetchedAt: string
+  source: "nws"
+  pointCount: number
+  failedPoints: number
+  message?: string
+}

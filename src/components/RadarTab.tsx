@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type MutableRefObject } from "react"
 import mapboxgl from "mapbox-gl"
 import "mapbox-gl/dist/mapbox-gl.css"
-import { Building2, Layers, Loader2, MapPin, Pause, Play, Radar, Satellite, Settings, SlidersHorizontal, Target } from "lucide-react"
+import { Building2, ChevronDown, Layers, Loader2, MapPin, Pause, Play, Radar, Satellite, Settings, SlidersHorizontal, Target, ThermometerSun } from "lucide-react"
 
 import { useNotams } from "../hooks/useNotams"
 import { useObstructions } from "../hooks/useObstructions"
+import { useHeatmapWeather } from "../hooks/useHeatmapWeather"
 import { useTfrs } from "../hooks/useTfrs"
 import { fetchTfrWebText } from "../lib/aviation/tfrClient"
+import { computeHeatmapGeoJson, type HeatmapFeatureProperties, type HeatmapRenderMode } from "../lib/aviation/heatmapFlyability"
+import { fetchStateBoundary, isPointInBoundary } from "../lib/aviation/stateBoundary"
+import { STATE_BOUNDS, STATE_CODES_SORTED } from "../lib/aviation/stateBounds"
+import type { FlyabilityThresholds } from "../utils/FlyabilityEngine"
 import type { BoundsTuple, NotamFeatureProperties, NotamItem, ObstructionFeatureProperties, TfrFeatureProperties } from "../lib/aviation/types"
 import type { ThemeMode } from "../lib/theme"
 
@@ -89,6 +94,15 @@ const OBSTRUCTION_SOURCE_ID = "obstruction-points"
 const OBSTRUCTION_CIRCLE_LAYER_ID = "obstruction-circles"
 const OBSTRUCTION_CLUSTER_LAYER_ID = "obstruction-clusters"
 const OBSTRUCTION_CLUSTER_COUNT_LAYER_ID = "obstruction-cluster-count"
+
+const HEATMAP_FILL_SOURCE_ID = "heatmap-flyability-fill"
+const HEATMAP_FILL_LAYER_ID = "heatmap-flyability-fill-layer"
+const HEATMAP_FILL_OUTLINE_LAYER_ID = "heatmap-flyability-fill-outline"
+const HEATMAP_POINT_SOURCE_ID = "heatmap-flyability-points"
+const HEATMAP_POINT_LAYER_ID = "heatmap-flyability-heatmap-layer"
+const HEATMAP_REFRESH_MS = 15 * 60 * 1000
+
+const THRESHOLDS_STORAGE_KEY = "gi-drone.thresholds"
 
 const OBSTRUCTION_TYPE_OPTIONS = [
   "TOWER", "TANK", "STACK", "CRANE",
@@ -942,6 +956,193 @@ const bindObstructionInteractions = (
   boundRef.current = true
 }
 
+const ensureHeatmapLayers = (
+  map: mapboxgl.Map,
+  fillData: GeoJSON.FeatureCollection,
+  pointData: GeoJSON.FeatureCollection,
+  visible: boolean,
+  mode: HeatmapRenderMode,
+) => {
+  const fillVis = visible && mode === "fill" ? "visible" : "none"
+  const heatVis = visible && mode === "heatmap" ? "visible" : "none"
+
+  // Fill source + layers
+  const existingFillSource = map.getSource(HEATMAP_FILL_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
+  if (!existingFillSource) {
+    map.addSource(HEATMAP_FILL_SOURCE_ID, { type: "geojson", data: fillData })
+  } else {
+    existingFillSource.setData(fillData)
+  }
+
+  if (!map.getLayer(HEATMAP_FILL_LAYER_ID)) {
+    // Insert below TFR layers so heatmap renders underneath aviation data
+    const beforeLayer = map.getLayer(TFR_FILL_LAYER_ID) ? TFR_FILL_LAYER_ID : undefined
+    map.addLayer({
+      id: HEATMAP_FILL_LAYER_ID,
+      type: "fill",
+      source: HEATMAP_FILL_SOURCE_ID,
+      paint: {
+        "fill-color": [
+          "interpolate", ["linear"], ["get", "score"],
+          0, "#dc2626",    // red — danger
+          40, "#ea580c",   // orange — poor
+          55, "#f59e0b",   // amber — caution
+          75, "#22c55e",   // green — good
+          100, "#15803d",  // deep green — excellent
+        ],
+        "fill-opacity": 0.55,
+      },
+      layout: { visibility: fillVis },
+    }, beforeLayer)
+  }
+
+  if (!map.getLayer(HEATMAP_FILL_OUTLINE_LAYER_ID)) {
+    map.addLayer({
+      id: HEATMAP_FILL_OUTLINE_LAYER_ID,
+      type: "line",
+      source: HEATMAP_FILL_SOURCE_ID,
+      paint: {
+        "line-color": [
+          "interpolate", ["linear"], ["get", "score"],
+          0, "#b91c1c",
+          40, "#c2410c",
+          55, "#d97706",
+          75, "#16a34a",
+          100, "#166534",
+        ],
+        "line-width": 0.5,
+        "line-opacity": 0.5,
+      },
+      layout: { visibility: fillVis },
+    })
+  }
+
+  // Point source + heatmap layer
+  const existingPointSource = map.getSource(HEATMAP_POINT_SOURCE_ID) as mapboxgl.GeoJSONSource | undefined
+  if (!existingPointSource) {
+    map.addSource(HEATMAP_POINT_SOURCE_ID, { type: "geojson", data: pointData })
+  } else {
+    existingPointSource.setData(pointData)
+  }
+
+  if (!map.getLayer(HEATMAP_POINT_LAYER_ID)) {
+    const beforeLayer = map.getLayer(TFR_FILL_LAYER_ID) ? TFR_FILL_LAYER_ID : undefined
+    map.addLayer({
+      id: HEATMAP_POINT_LAYER_ID,
+      type: "heatmap",
+      source: HEATMAP_POINT_SOURCE_ID,
+      paint: {
+        "heatmap-weight": ["get", "weight"],
+        "heatmap-intensity": 1.2,
+        "heatmap-radius": [
+          "interpolate", ["linear"], ["zoom"],
+          4, 20,
+          7, 40,
+          10, 60,
+        ],
+        "heatmap-color": [
+          "interpolate", ["linear"], ["heatmap-density"],
+          0, "rgba(0,0,0,0)",
+          0.15, "#15803d",
+          0.3, "#22c55e",
+          0.5, "#eab308",
+          0.7, "#ea580c",
+          1, "#dc2626",
+        ],
+        "heatmap-opacity": 0.7,
+      },
+      layout: { visibility: heatVis },
+    }, beforeLayer)
+  }
+}
+
+const buildHeatmapPopupHtml = (properties: Partial<HeatmapFeatureProperties>, theme: ThemeMode = "dark") => {
+  const isDark = theme === "dark"
+  const text = isDark ? "#f1f5f9" : "#0f172a"
+  const scoreValue = typeof properties.score === "number" ? properties.score : null
+  const statusLabel = (properties.status as string) ?? "unknown"
+  const statusColor =
+    statusLabel === "Safe" ? "#22c55e" :
+    statusLabel === "Caution" ? "#f59e0b" :
+    statusLabel === "Danger" ? "#ef4444" : "#94a3b8"
+
+  const title = scoreValue !== null
+    ? `Flyability: ${scoreValue}/100`
+    : "Flyability"
+
+  const conditionRows: string[] = []
+  if (properties.windSpeedMph != null) conditionRows.push(`<strong style="color:${text};">Wind:</strong> ${properties.windSpeedMph} mph`)
+  if (properties.temperatureF != null) conditionRows.push(`<strong style="color:${text};">Temp:</strong> ${properties.temperatureF}°F`)
+  if (properties.visibilityMiles != null) conditionRows.push(`<strong style="color:${text};">Visibility:</strong> ${properties.visibilityMiles} mi`)
+  if (properties.precipitationProbability != null) conditionRows.push(`<strong style="color:${text};">Precip:</strong> ${properties.precipitationProbability}%`)
+  if (properties.humidity != null) conditionRows.push(`<strong style="color:${text};">Humidity:</strong> ${properties.humidity}%`)
+  if (properties.cloudCover != null) conditionRows.push(`<strong style="color:${text};">Clouds:</strong> ${properties.cloudCover}%`)
+  if (properties.shortForecast) conditionRows.push(`<strong style="color:${text};">Forecast:</strong> ${escapeHtml(properties.shortForecast)}`)
+
+  // Parse JSON arrays from GeoJSON string properties
+  let cautionReasons: string[] = []
+  let dangerReasons: string[] = []
+  try {
+    if (typeof properties.cautionReasons === "string") cautionReasons = JSON.parse(properties.cautionReasons)
+    else if (Array.isArray(properties.cautionReasons)) cautionReasons = properties.cautionReasons
+  } catch {}
+  try {
+    if (typeof properties.dangerReasons === "string") dangerReasons = JSON.parse(properties.dangerReasons)
+    else if (Array.isArray(properties.dangerReasons)) dangerReasons = properties.dangerReasons
+  } catch {}
+
+  const reasonRows: string[] = []
+  for (const r of dangerReasons) reasonRows.push(`<span style="color:#ef4444;">⚠ ${escapeHtml(r)}</span>`)
+  for (const r of cautionReasons) reasonRows.push(`<span style="color:#f59e0b;">● ${escapeHtml(r)}</span>`)
+
+  const rows = [
+    `<span style="color:${statusColor};font-weight:600;text-transform:uppercase;font-size:10px;letter-spacing:0.05em;">${escapeHtml(statusLabel)}</span>`,
+    ...conditionRows,
+    ...reasonRows,
+  ]
+
+  return buildPopupCard(theme, title, rows)
+}
+
+const bindHeatmapInteractions = (
+  map: mapboxgl.Map,
+  popupRef: MutableRefObject<mapboxgl.Popup | null>,
+  boundRef: MutableRefObject<boolean>,
+  themeRef: MutableRefObject<ThemeMode>,
+) => {
+  if (boundRef.current) return
+
+  const handleMouseEnter = () => {
+    map.getCanvas().style.cursor = "pointer"
+  }
+
+  const handleMouseLeave = () => {
+    map.getCanvas().style.cursor = ""
+    popupRef.current?.remove()
+  }
+
+  const handleMouseMove = (event: mapboxgl.MapLayerMouseEvent) => {
+    const feature = event.features?.[0]
+    if (!feature || !feature.properties) return
+    const properties = feature.properties as Partial<HeatmapFeatureProperties>
+    const html = buildHeatmapPopupHtml(properties, themeRef.current)
+
+    if (!popupRef.current) {
+      popupRef.current = new mapboxgl.Popup({ offset: 14, closeButton: false, closeOnClick: false, className: "site-popup" })
+    }
+    popupRef.current
+      .setLngLat(event.lngLat)
+      .setHTML(html)
+      .addTo(map)
+  }
+
+  map.on("mouseenter", HEATMAP_FILL_LAYER_ID, handleMouseEnter)
+  map.on("mouseleave", HEATMAP_FILL_LAYER_ID, handleMouseLeave)
+  map.on("mousemove", HEATMAP_FILL_LAYER_ID, handleMouseMove)
+
+  boundRef.current = true
+}
+
 const dismissFocusMarker = (
   focusMarkerRef: MutableRefObject<mapboxgl.Marker | null>,
   focusPopupRef: MutableRefObject<mapboxgl.Popup | null>,
@@ -1146,6 +1347,61 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     return isNaN(v) ? RV_DEFAULT_OPACITY : Math.min(1, Math.max(0, v))
   })
   const [showSettings, setShowSettings] = useState(false)
+  const [showHeatmap, setShowHeatmap] = useState(() => localStorage.getItem("gi-drone:radar:showHeatmap") === "true")
+  const [heatmapState, setHeatmapState] = useState<string | null>(() => localStorage.getItem("gi-drone:radar:heatmapState") || null)
+  const [heatmapMode, setHeatmapMode] = useState<HeatmapRenderMode>(() => {
+    const v = localStorage.getItem("gi-drone:radar:heatmapMode")
+    return v === "heatmap" ? "heatmap" : "fill"
+  })
+  const [heatmapOpacity, setHeatmapOpacity] = useState(() => {
+    const v = parseFloat(localStorage.getItem("gi-drone:radar:heatmapOpacity") ?? "")
+    return isNaN(v) ? 0.55 : Math.min(1, Math.max(0.1, v))
+  })
+  const [showHeatmapDropdown, setShowHeatmapDropdown] = useState(false)
+  const heatmapDropdownRef = useRef<HTMLDivElement | null>(null)
+  const heatmapPopupRef = useRef<mapboxgl.Popup | null>(null)
+  const heatmapInteractionsBoundRef = useRef(false)
+  const heatmapRefreshRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const flyabilityThresholds = useMemo<FlyabilityThresholds | undefined>(() => {
+    try {
+      const raw = localStorage.getItem(THRESHOLDS_STORAGE_KEY)
+      if (!raw) return undefined
+      return JSON.parse(raw) as FlyabilityThresholds
+    } catch { return undefined }
+  }, [])
+
+  // Always fetch US-wide heatmap (pre-computed/cached); state selection is just zoom + clip
+  const heatmapWeather = useHeatmapWeather({
+    stateCode: "US",
+    enabled: showHeatmap,
+  })
+
+  // Fetch state boundary polygon for clipping heatmap to state shape
+  const [stateBoundary, setStateBoundary] = useState<Awaited<ReturnType<typeof fetchStateBoundary>>>(null)
+  useEffect(() => {
+    if (!heatmapState) { setStateBoundary(null); return }
+    let cancelled = false
+    fetchStateBoundary(heatmapState).then((b) => { if (!cancelled) setStateBoundary(b) })
+    return () => { cancelled = true }
+  }, [heatmapState])
+
+  const { fillCollection: heatmapFillGeoJson, pointCollection: heatmapPointGeoJson } = useMemo(() => {
+    if (!heatmapWeather.data?.grid?.length) {
+      const empty: GeoJSON.FeatureCollection = { type: "FeatureCollection", features: [] }
+      return { fillCollection: empty, pointCollection: empty }
+    }
+    // Clip grid cells to state boundary
+    const grid = stateBoundary
+      ? heatmapWeather.data.grid.filter((c) => isPointInBoundary(c.lat, c.lon, stateBoundary))
+      : heatmapWeather.data.grid
+    return computeHeatmapGeoJson(
+      grid,
+      heatmapWeather.data.cellSizeDeg,
+      flyabilityThresholds,
+    )
+  }, [heatmapWeather.data, flyabilityThresholds, stateBoundary])
+
   // Register global callback for popup button — opens a secondary detail popup
   useEffect(() => {
     const handler = (_btn: HTMLElement, notamId: string) => {
@@ -1320,6 +1576,8 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     bindNotamInteractions(map, notamPopupRef, notamInteractionsBoundRef, themeRef)
     ensureObstructionLayer(map, obstructionGeoJson, showObstructions)
     bindObstructionInteractions(map, obstructionPopupRef, obstructionInteractionsBoundRef, themeRef, focusMarkerRef, focusPopupRef, focusDismissTimerRef)
+    ensureHeatmapLayers(map, heatmapFillGeoJson, heatmapPointGeoJson, showHeatmap, heatmapMode)
+    bindHeatmapInteractions(map, heatmapPopupRef, heatmapInteractionsBoundRef, themeRef)
     syncWeatherOverlay()
     setLayerVisibility(TFR_FILL_LAYER_ID, showTfr)
     setLayerVisibility(TFR_LINE_LAYER_ID, showTfr)
@@ -1328,6 +1586,9 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     setLayerVisibility(OBSTRUCTION_CIRCLE_LAYER_ID, showObstructions)
     setLayerVisibility(OBSTRUCTION_CLUSTER_LAYER_ID, showObstructions)
     setLayerVisibility(OBSTRUCTION_CLUSTER_COUNT_LAYER_ID, showObstructions)
+    setLayerVisibility(HEATMAP_FILL_LAYER_ID, showHeatmap && heatmapMode === "fill")
+    setLayerVisibility(HEATMAP_FILL_OUTLINE_LAYER_ID, showHeatmap && heatmapMode === "fill")
+    setLayerVisibility(HEATMAP_POINT_LAYER_ID, showHeatmap && heatmapMode === "heatmap")
     syncNotamMarkers()
     syncTfrMarkers()
   }
@@ -1457,6 +1718,8 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
       notamMarkersRef.current = []
       tfrMarkersRef.current.forEach((m) => m.remove())
       tfrMarkersRef.current = []
+      heatmapPopupRef.current?.remove()
+      if (heatmapRefreshRef.current) clearInterval(heatmapRefreshRef.current)
       dismissFocusMarker(focusMarkerRef, focusPopupRef, focusDismissTimerRef)
       map.remove()
       mapRef.current = null
@@ -1465,6 +1728,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
       didRunInitialStyleEffectRef.current = false
       tfrInteractionsBoundRef.current = false
       notamInteractionsBoundRef.current = false
+      heatmapInteractionsBoundRef.current = false
     }
   }, [missingToken, mapboxToken, resolvedBaseStyle])
 
@@ -1487,6 +1751,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     detailPopupRef.current?.remove()
     tfrInteractionsBoundRef.current = false
     notamInteractionsBoundRef.current = false
+    heatmapInteractionsBoundRef.current = false
     layersAddedRef.current = false
     setMapLoaded(false)
     map.once("style.load", () => {
@@ -1500,7 +1765,7 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   // Ensure layers exist and data is current
   useEffect(() => {
     syncOverlays()
-  }, [tfrGeoJson, notamGeoJson, obstructionGeoJson])
+  }, [tfrGeoJson, notamGeoJson, obstructionGeoJson, heatmapFillGeoJson, heatmapPointGeoJson])
 
   // Dedicated visibility toggles
   useEffect(() => {
@@ -1520,6 +1785,23 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
     setLayerVisibility(OBSTRUCTION_CLUSTER_LAYER_ID, showObstructions)
     setLayerVisibility(OBSTRUCTION_CLUSTER_COUNT_LAYER_ID, showObstructions)
   }, [showObstructions, mapLoaded])
+
+  useEffect(() => {
+    setLayerVisibility(HEATMAP_FILL_LAYER_ID, showHeatmap && heatmapMode === "fill")
+    setLayerVisibility(HEATMAP_FILL_OUTLINE_LAYER_ID, showHeatmap && heatmapMode === "fill")
+    setLayerVisibility(HEATMAP_POINT_LAYER_ID, showHeatmap && heatmapMode === "heatmap")
+  }, [showHeatmap, heatmapMode, mapLoaded])
+
+  // Sync heatmap opacity to map layers
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !mapLoaded) return
+    try {
+      if (map.getLayer(HEATMAP_FILL_LAYER_ID)) map.setPaintProperty(HEATMAP_FILL_LAYER_ID, "fill-opacity", heatmapOpacity)
+      if (map.getLayer(HEATMAP_FILL_OUTLINE_LAYER_ID)) map.setPaintProperty(HEATMAP_FILL_OUTLINE_LAYER_ID, "line-opacity", Math.min(heatmapOpacity + 0.05, 1))
+      if (map.getLayer(HEATMAP_POINT_LAYER_ID)) map.setPaintProperty(HEATMAP_POINT_LAYER_ID, "heatmap-opacity", heatmapOpacity)
+    } catch { /* layer not yet added */ }
+  }, [heatmapOpacity, mapLoaded])
 
   useEffect(() => {
     syncWeatherOverlay()
@@ -1575,6 +1857,35 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
   useEffect(() => { localStorage.setItem("gi-drone:radar:showObstructions", String(showObstructions)) }, [showObstructions])
   useEffect(() => { localStorage.setItem("gi-drone:radar:obstructionTypeFilter", JSON.stringify(obstructionTypeFilter)) }, [obstructionTypeFilter])
   useEffect(() => { localStorage.setItem("gi-drone:radar:opacity", String(radarOpacity)) }, [radarOpacity])
+  useEffect(() => { localStorage.setItem("gi-drone:radar:showHeatmap", String(showHeatmap)) }, [showHeatmap])
+  useEffect(() => { localStorage.setItem("gi-drone:radar:heatmapMode", heatmapMode) }, [heatmapMode])
+  useEffect(() => { localStorage.setItem("gi-drone:radar:heatmapOpacity", String(heatmapOpacity)) }, [heatmapOpacity])
+  useEffect(() => {
+    if (heatmapState) localStorage.setItem("gi-drone:radar:heatmapState", heatmapState)
+    else localStorage.removeItem("gi-drone:radar:heatmapState")
+  }, [heatmapState])
+
+  // Heatmap auto-refresh every 15 min
+  useEffect(() => {
+    if (!showHeatmap) {
+      if (heatmapRefreshRef.current) { clearInterval(heatmapRefreshRef.current); heatmapRefreshRef.current = null }
+      return
+    }
+    heatmapRefreshRef.current = setInterval(() => { heatmapWeather.refresh() }, HEATMAP_REFRESH_MS)
+    return () => { if (heatmapRefreshRef.current) { clearInterval(heatmapRefreshRef.current); heatmapRefreshRef.current = null } }
+  }, [showHeatmap])
+
+  // Close heatmap dropdown on click-outside
+  useEffect(() => {
+    if (!showHeatmapDropdown) return
+    const handler = (e: MouseEvent) => {
+      if (heatmapDropdownRef.current && !heatmapDropdownRef.current.contains(e.target as Node)) {
+        setShowHeatmapDropdown(false)
+      }
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [showHeatmapDropdown])
 
   // Close obstruction filter dropdown on click-outside
   useEffect(() => {
@@ -1868,6 +2179,126 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
             )}
           </div>
 
+          {/* Flyability heatmap split button — left toggles layer, right opens state picker */}
+          <div ref={heatmapDropdownRef} className="pointer-events-auto relative">
+            <span className="inline-flex items-stretch">
+              <button
+                type="button"
+                onClick={() => setShowHeatmap((prev) => !prev)}
+                className={`rounded-l-full border py-1 pl-3 pr-2 transition ${
+                  showHeatmap
+                    ? "border-cyan-400/70 bg-cyan-400/15 text-cyan-200"
+                    : "border-slate-800 text-slate-400 hover:text-white"
+                }`}
+              >
+                <ThermometerSun className="mr-1.5 inline h-3 w-3" />
+                Flyability
+              </button>
+              <button
+                type="button"
+                onClick={() => setShowHeatmapDropdown((prev) => !prev)}
+                className={`rounded-r-full border border-l-0 py-1 pl-1.5 pr-2.5 transition ${
+                  showHeatmapDropdown
+                    ? "border-cyan-400/70 bg-cyan-500/25 text-cyan-200"
+                    : showHeatmap
+                      ? "border-cyan-400/70 bg-cyan-400/15 text-cyan-300 hover:bg-cyan-500/25"
+                      : "border-slate-800 text-slate-400 hover:text-white"
+                }`}
+                aria-label="Flyability options"
+              >
+                <ChevronDown className="h-3 w-3" />
+              </button>
+            </span>
+
+            {showHeatmapDropdown && (
+              <div className="absolute bottom-full left-full z-50 mb-1 ml-1 w-64 rounded-xl border border-cyan-500/30 bg-slate-900/95 p-3 shadow-xl shadow-black/40 backdrop-blur">
+                <p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                  Shows your Conditions tab thresholds as a map overlay
+                </p>
+
+                {/* Render mode toggle */}
+                <div className="mb-3">
+                  <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Render Mode</label>
+                  <div className="grid grid-cols-2 gap-1">
+                    {(["fill", "heatmap"] as const).map((m) => (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => setHeatmapMode(m)}
+                        className={`rounded-lg py-1 text-[10px] font-semibold uppercase tracking-[0.1em] transition ${
+                          heatmapMode === m
+                            ? "bg-cyan-500/30 text-cyan-200"
+                            : "text-slate-400 hover:bg-slate-800 hover:text-white"
+                        }`}
+                      >
+                        {m === "fill" ? "Grid Fill" : "Heatmap"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Opacity slider */}
+                <div className="mb-3">
+                  <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Opacity</label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0.1}
+                      max={1}
+                      step={0.05}
+                      value={heatmapOpacity}
+                      onChange={(e) => setHeatmapOpacity(Number(e.target.value))}
+                      className="flex-1 min-w-0 accent-cyan-400"
+                      aria-label="Heatmap opacity"
+                    />
+                    <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-slate-400">
+                      {Math.round(heatmapOpacity * 100)}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* State picker */}
+                <label className="mb-1.5 block text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">Zoom to State</label>
+                <div className="max-h-48 overflow-y-auto rounded-lg border border-slate-700/50 bg-slate-950/60">
+                  {STATE_CODES_SORTED.map((code) => {
+                    const bounds = STATE_BOUNDS[code]
+                    const isSelected = heatmapState === code
+                    return (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => {
+                          if (isSelected) {
+                            setHeatmapState(null)
+                          } else {
+                            setHeatmapState(code)
+                            setShowHeatmap(true)
+                            const map = mapRef.current
+                            if (map) {
+                              map.fitBounds(
+                                [[bounds.minLon, bounds.minLat], [bounds.maxLon, bounds.maxLat]],
+                                { padding: 40, duration: 900 },
+                              )
+                            }
+                          }
+                          setShowHeatmapDropdown(false)
+                        }}
+                        className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition ${
+                          isSelected
+                            ? "bg-cyan-500/20 text-cyan-200"
+                            : "text-slate-300 hover:bg-slate-800"
+                        }`}
+                      >
+                        <span className="w-6 shrink-0 font-mono text-[10px] text-slate-500">{code}</span>
+                        <span className="truncate">{bounds.name}</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Radar animation controls — inline between My Sites and Settings on wide, own row on narrow */}
           <div className="order-last flex w-full shrink-0 items-center gap-2 sm:order-none sm:w-auto">
             <button
@@ -2016,6 +2447,18 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
               {nearbyObstructionCount} obstruction{nearbyObstructionCount === 1 ? "" : "s"}
             </span>
           )}
+          {showHeatmap && (
+            heatmapWeather.isLoading || heatmapWeather.isRefreshing ? (
+              <span className="inline-flex items-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-400/10 px-3 py-1 text-cyan-200">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Loading flyability{heatmapState ? ` (${heatmapState})` : " (US)"}...
+              </span>
+            ) : (
+              <span className="rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-cyan-200">
+                {heatmapWeather.data?.pointCount ?? 0} flyability cell{(heatmapWeather.data?.pointCount ?? 0) === 1 ? "" : "s"}{heatmapState ? ` (${heatmapState})` : " (US)"}
+              </span>
+            )
+          )}
           {tfrs.error ? (
             <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
               {tfrs.error}
@@ -2029,6 +2472,11 @@ export function RadarTab({ theme, focusLocation, defaultCenter, sites = [] }: Ra
           {notams.error ? (
             <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
               {notams.error}
+            </span>
+          ) : null}
+          {heatmapWeather.error ? (
+            <span className="max-w-full break-words rounded-full border border-rose-500/40 bg-rose-500/10 px-3 py-1 text-rose-200">
+              {heatmapWeather.error}
             </span>
           ) : null}
           {missingToken && (

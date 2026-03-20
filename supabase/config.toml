@@ -18,3 +18,12 @@ verify_jwt = false
 
 [functions.notam-sync]
 verify_jwt = false
+
+[functions.obstruction]
+verify_jwt = false
+
+[functions.obstruction-sync]
+verify_jwt = false
+
+[functions.heatmap-weather]
+verify_jwt = false
