@@ -12,3 +12,6 @@ dev-dist/
 .idea/
 .claude/
 *.tsbuildinfo
+
+# SQLite MCP server stub file (auto-created on MCP startup, always empty)
+sqlite_mcp_server.db
