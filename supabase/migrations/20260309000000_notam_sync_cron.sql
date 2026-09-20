@@ -1,7 +1,8 @@
 -- Schedule the notam-sync Edge Function to run every 15 minutes via pg_cron + pg_net.
 --
 -- PREREQUISITES before running this migration:
---   1. Register at https://api.faa.gov/ for free API credentials.
+--   1. Register at https://Portal.APIC4E.faa.gov/ for free API credentials.
+--      (Replaces legacy api.faa.gov portal, decommissioned 2026-05-06.)
 --   2. In Supabase Dashboard → Settings → Edge Functions, add secrets:
 --        FAA_NOTAM_CLIENT_ID     (from FAA registration)
 --        FAA_NOTAM_CLIENT_SECRET (from FAA registration)
