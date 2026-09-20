@@ -25,8 +25,8 @@ left is readable.
 1. Solid slate-950 base.
 2. Splash with its top 175px cropped (removes the small centered logo baked into
    it), scaled to 1440px tall, pinned to the right edge.
-3. Horizontal alpha mask: fully transparent for x < 500, linear to opaque at
-   x = 1500. Left ~40% is flat slate-950.
+3. Horizontal alpha mask: fully transparent for x < 1000, linear to opaque at
+   x = 1800. Left 1000px (about 40%) is flat slate-950.
 4. Wordmark scaled to 900px wide, centered at (2000, 640), over a soft cyan glow
    and a darkened halo for contrast.
 5. Emerald rule 3px, x 1700..2300, below the wordmark.
